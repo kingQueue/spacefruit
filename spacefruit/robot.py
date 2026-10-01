@@ -15,7 +15,10 @@ from .hardware import GPSSensor, Planter, PlotMapper, StartButton, TemperatureHu
 from .models import EnvironmentReading, GPSReading, PlantProfile, PlantRecommendation, PlantingCell, PlantingStepError, Plot, RobotState
 from .planner import GridPlanner
 from .recommendations import PlantRecommendationEngine
-from .web import APP_HOST, APP_PORT, THUMBS_DIR, AppServer, render_app
+from .web import APP_HOST, APP_PORT, THUMBS_DIR, AppServer
+
+DEMO_PLOT_WIDTH_M = 6.0
+DEMO_PLOT_LENGTH_M = 8.0
 
 class FarmingRobot:
     def __init__(self, start_server: bool = True, app_host: str = APP_HOST, app_port: int = APP_PORT):
