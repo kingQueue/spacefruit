@@ -43,6 +43,29 @@ class SpaceFruitPlantingTests(unittest.TestCase):
         self.assertTrue(all(cell.profile_id in self.robot.plant_profiles for cell in self.robot.planting_cells))
         self.assertTrue(all(profile.img for profile in self.robot.plant_profiles.values()))
 
+
+    def test_state_revision_increases_once_per_completed_seed(self):
+        self.prepare_plan(3)
+        with patch.object(main.time, "sleep", return_value=None):
+            self.robot.plant_all()
+
+        self.assertEqual(self.robot.state_revision, 3)
+        self.assertEqual(self.robot.planted_counts["Tomato"], 3)
+        state = self.robot.api_state()
+        self.assertEqual(state["state_revision"], 3)
+        self.assertEqual(sum(1 for cell in state["planting_cells"] if cell["status"] == "planted"), 3)
+
+    def test_extra_seed_of_same_type_gets_its_own_profile(self):
+        self.prepare_plan(6)
+        with patch.object(main.time, "sleep", return_value=None):
+            self.robot.plant_all()
+
+        tomato_cells = [c for c in self.robot.planting_cells if c.plant == "Tomato"]
+        tomato_profiles = [p for p in self.robot.plant_profiles.values() if p.plant_type == "Tomato"]
+        self.assertEqual(len(tomato_cells), 6)
+        self.assertEqual(len(tomato_profiles), 6)
+        self.assertTrue(all(c.status == "planted" and c.profile_id for c in tomato_cells))
+
     def test_grid_count_mismatch_has_specific_error(self):
         self.robot.seed_plan = {"Tomato": 2}
         self.robot.state = main.RobotState.WAITING_FOR_SEEDS
