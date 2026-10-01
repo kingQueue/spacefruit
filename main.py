@@ -114,6 +114,19 @@ class PlantingCell:
     planting_depth_m: float
     profile_id: Optional[str] = None
     status: str = "pending"
+    seed_number: int = 0
+    error: Optional[str] = None
+
+
+class PlantingStepError(RuntimeError):
+    """Raised when one seed fails a required planting workflow step."""
+    def __init__(self, code: str, seed_number: int, plant: str, step: str, detail: str):
+        self.code = code
+        self.seed_number = seed_number
+        self.plant = plant
+        self.step = step
+        self.detail = detail
+        super().__init__(f"[{code}] Seed {seed_number} ({plant}) failed at {step}: {detail}")
 
 
 @dataclass
@@ -400,9 +413,11 @@ class GridPlanner:
 # ---------------------------------------------------------------------------
 
 class AppServer:
-    def __init__(self, robot: "FarmingRobot"):
+    def __init__(self, robot: "FarmingRobot", host: str = APP_HOST, port: int = APP_PORT):
         self.robot = robot
-        self.server = HTTPServer((APP_HOST, APP_PORT), self._handler_class())
+        self.host = host
+        self.port = port
+        self.server = HTTPServer((host, port), self._handler_class())
 
     def _handler_class(self):
         robot = self.robot
@@ -437,14 +452,14 @@ class AppServer:
                 self._send_json({"error": "not found"}, 404)
 
             def _send_thumbnail(self, path: str):
-                requested_name = unquote(path[len("/thumbs/"):])
-                if not requested_name or "/" in requested_name or "\\" in requested_name:
+                requested_name = unquote(path[len("/thumbs/"):]).replace("\\", "/")
+                if not requested_name or requested_name.startswith("/") or any(part in {"", ".", ".."} for part in requested_name.split("/")):
                     self._send_json({"error": "invalid thumbnail path"}, 400)
                     return
 
                 thumbnail_path = os.path.realpath(os.path.join(THUMBS_DIR, requested_name))
                 thumbs_root = os.path.realpath(THUMBS_DIR)
-                if not thumbnail_path.startswith(thumbs_root + os.sep):
+                if thumbnail_path != thumbs_root and not thumbnail_path.startswith(thumbs_root + os.sep):
                     self._send_json({"error": "invalid thumbnail path"}, 400)
                     return
                 if not os.path.isfile(thumbnail_path):
@@ -506,7 +521,7 @@ class AppServer:
     def start(self):
         thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         thread.start()
-        print(f"[APP] Local control app running at http://{APP_HOST}:{APP_PORT}")
+        print(f"[APP] Local control app running at http://{self.host}:{self.port}")
 
     def stop(self):
         self.server.shutdown()
@@ -517,7 +532,7 @@ class AppServer:
 # ---------------------------------------------------------------------------
 
 class FarmingRobot:
-    def __init__(self):
+    def __init__(self, start_server: bool = True, app_host: str = APP_HOST, app_port: int = APP_PORT):
         self.state = RobotState.WAITING_FOR_START
         self.start_button = StartButton()
         self.env_sensor = TemperatureHumiditySensor()
@@ -537,11 +552,14 @@ class FarmingRobot:
         self.planting_cells: list[PlantingCell] = []
         self.plant_profiles: dict[str, PlantProfile] = {}
         self.loaded_seed_counts: dict[str, int] = {}
+        self.planting_errors: list[str] = []
+        self.last_error: Optional[str] = None
+        self.planted_counts: dict[str, int] = {}
 
         self.confirmed = False
         self.current_cell_index = 0
         self.message = "Waiting for start button."
-        self.app_server = AppServer(self)
+        self.app_server = AppServer(self, app_host, app_port) if start_server else None
 
     # ----------------------------
     # Planning edits
@@ -608,6 +626,8 @@ class FarmingRobot:
     # ----------------------------
 
     def run(self):
+        if self.app_server is None:
+            raise RuntimeError("APP_SERVER_DISABLED: FarmingRobot.run requires start_server=True.")
         self.app_server.start()
         try:
             self.wait_for_start()
@@ -629,7 +649,10 @@ class FarmingRobot:
             print("\n[ROBOT] Stopped.")
         except Exception as exc:
             self.state = RobotState.ERROR
-            self.message = f"Error: {exc}"
+            self.last_error = str(exc)
+            self.message = str(exc)
+            if str(exc) not in self.planting_errors:
+                self.planting_errors.append(str(exc))
             print(f"\n[ERROR] {exc}")
 
     def wait_for_start(self):
@@ -696,39 +719,102 @@ class FarmingRobot:
         while self.planter.seed_count < self.total_requested_seeds():
             time.sleep(0.25)
 
+    def validate_planting_plan(self) -> None:
+        requested_total = self.total_requested_seeds()
+        if len(self.planting_cells) != requested_total:
+            raise PlantingStepError("GRID_COUNT_MISMATCH", 0, "multiple", "grid_validation", f"expected {requested_total} planting slots but found {len(self.planting_cells)}")
+        counts = {plant: 0 for plant in self.seed_plan}
+        for cell in self.planting_cells:
+            if cell.plant not in counts:
+                raise PlantingStepError("GRID_UNKNOWN_PLANT", 0, cell.plant, "grid_validation", "plant type is not present in the confirmed seed plan")
+            counts[cell.plant] += 1
+        for plant, requested in self.seed_plan.items():
+            if counts.get(plant, 0) != requested:
+                raise PlantingStepError("GRID_PLANT_COUNT_MISMATCH", 0, plant, "grid_validation", f"expected {requested} slots but found {counts.get(plant, 0)}")
+
+    def validate_planting_complete(self) -> None:
+        for cell in self.planting_cells:
+            if cell.status != "planted":
+                raise PlantingStepError("PLANTING_INCOMPLETE", cell.seed_number, cell.plant, "completion_validation", f"cell is still {cell.status}")
+            if not cell.profile_id or cell.profile_id not in self.plant_profiles:
+                raise PlantingStepError("PROFILE_LINK_MISSING", cell.seed_number, cell.plant, "completion_validation", "planted cell has no valid profile link")
+        if len(self.plant_profiles) != len(self.planting_cells):
+            raise PlantingStepError("PROFILE_COUNT_MISMATCH", 0, "multiple", "completion_validation", f"expected {len(self.planting_cells)} profiles but found {len(self.plant_profiles)}")
+        for plant, requested in self.seed_plan.items():
+            if self.planted_counts.get(plant, 0) != requested:
+                raise PlantingStepError("PLANTED_COUNT_MISMATCH", 0, plant, "completion_validation", f"expected {requested} planted seeds but recorded {self.planted_counts.get(plant, 0)}")
+        if self.planter.seed_count != 0:
+            raise PlantingStepError("SEED_INVENTORY_REMAINS", 0, "multiple", "completion_validation", f"{self.planter.seed_count} loaded seeds remain")
+
     def plant_all(self):
         self.state = RobotState.PLANTING
         self.current_cell_index = 0
+        self.planted_counts = {plant: 0 for plant in self.seed_plan}
+        self.validate_planting_plan()
         total = len(self.planting_cells)
-
         for index, cell in enumerate(self.planting_cells, start=1):
             self.current_cell_index = index - 1
-            self.message = f"Planting {index}/{total}: {cell.plant}"
-            if not self.planter.plant(cell):
-                raise RuntimeError(f"Planter ran out of {cell.plant} seeds.")
+            cell.seed_number = index
+            cell.error = None
+            self.message = f"Planting seed {index}/{total}: {cell.plant}"
+            if cell.status != "pending":
+                raise PlantingStepError("CELL_NOT_PENDING", index, cell.plant, "cell_validation", f"cell is already {cell.status}")
+            before = self.planter.seed_inventory.get(cell.plant, 0)
+            if before <= 0:
+                error = PlantingStepError("SEED_INVENTORY_EMPTY", index, cell.plant, "seed_dispense", "no seed is available for this plant type")
+                cell.error = str(error); self.planting_errors.append(str(error)); self.last_error = str(error); raise error
+            try:
+                planted = self.planter.plant(cell)
+            except Exception as exc:
+                error = PlantingStepError("PLANTER_EXCEPTION", index, cell.plant, "seed_dispense", str(exc))
+                cell.error = str(error); self.planting_errors.append(str(error)); self.last_error = str(error); raise error from exc
+            after = self.planter.seed_inventory.get(cell.plant, 0)
+            if not planted or after != before - 1:
+                error = PlantingStepError("SEED_DISPENSE_FAILED", index, cell.plant, "seed_dispense", f"expected inventory {before - 1}, got {after}")
+                cell.error = str(error); self.planting_errors.append(str(error)); self.last_error = str(error); raise error
             cell.status = "planted"
-            self.create_profile_for_cell(cell)
-            print(f"[ROBOT] Progress: {index}/{total}")
+            try:
+                self.create_profile_for_cell(cell)
+            except Exception as exc:
+                cell.status = "error"
+                error = PlantingStepError("PROFILE_CREATION_FAILED", index, cell.plant, "profile_creation", str(exc))
+                cell.error = str(error); self.planting_errors.append(str(error)); self.last_error = str(error); raise error from exc
+            if not cell.profile_id or cell.profile_id not in self.plant_profiles:
+                cell.status = "error"
+                error = PlantingStepError("PROFILE_LINK_FAILED", index, cell.plant, "profile_link", "profile was not stored and linked")
+                cell.error = str(error); self.planting_errors.append(str(error)); self.last_error = str(error); raise error
+            profile = self.plant_profiles[cell.profile_id]
+            if profile.plant_type != cell.plant:
+                cell.status = "error"
+                error = PlantingStepError("PROFILE_PLANT_MISMATCH", index, cell.plant, "profile_validation", f"profile says {profile.plant_type!r}")
+                cell.error = str(error); self.planting_errors.append(str(error)); self.last_error = str(error); raise error
+            self.planted_counts[cell.plant] += 1
+            print(f"[ROBOT] Seed {index}/{total} completed: {cell.plant}")
+        self.validate_planting_complete()
+    @staticmethod
+    def _normalize_plant_name(value: str) -> str:
+        stem = os.path.splitext(os.path.basename(value))[0]
+        return re.sub(r"[\s_-]+", " ", stem).strip().lower()
 
-    def add_profile_img(self, plant):
-        for img in os.listdir("./thumbs"):
-            # Remove the file extension
-            img_name = re.sub(r"\.svg$", "", img, flags=re.IGNORECASE)
-
-            # Normalize spaces/underscores/hyphens
-            img_name = re.sub(r"[\s_-]+", " ", img_name).strip().lower()
-
-            # Normalize the plant name the same way
-            plant_name = re.sub(r"[\s_-]+", " ", plant).strip().lower()
-
-            print(img_name, " ", plant_name)
-
-            if img_name == plant_name:
-                return img
-
-        return None
-            
-
+    def add_profile_img(self, plant: str) -> str:
+        if not os.path.isdir(THUMBS_DIR):
+            raise FileNotFoundError(f"THUMBNAIL_DIRECTORY_MISSING: {THUMBS_DIR}")
+        matches = []
+        for root, _, files in os.walk(THUMBS_DIR):
+            for filename in files:
+                if filename.startswith("_") or os.path.splitext(filename)[1].lower() not in {".svg", ".png", ".webp", ".jpg", ".jpeg"}:
+                    continue
+                if self._normalize_plant_name(filename) == self._normalize_plant_name(plant):
+                    relative = os.path.relpath(os.path.join(root, filename), THUMBS_DIR)
+                    matches.append(relative.replace(os.sep, "/"))
+        if not matches:
+            default_path = os.path.join(THUMBS_DIR, "default.svg")
+            if not os.path.isfile(default_path):
+                raise FileNotFoundError(f"THUMBNAIL_MISSING: no thumbnail found for {plant!r} and default.svg is missing")
+            return "default.svg"
+        priority = {".svg": 0, ".png": 1, ".webp": 2, ".jpg": 3, ".jpeg": 4}
+        matches.sort(key=lambda name: (priority.get(os.path.splitext(name)[1].lower(), 99), name))
+        return matches[0]
     def create_profile_for_cell(self, cell: PlantingCell):
         assert self.environment is not None
         catalog = CATALOG_BY_NAME[cell.plant]
@@ -750,6 +836,8 @@ class FarmingRobot:
             water_needs=catalog.water_needs,
             typical_germination_days=catalog.typical_germination_days,
         )
+        if not profile.img:
+            raise FileNotFoundError(f"THUMBNAIL_MISSING: no thumbnail resolved for {cell.plant}")
         self.plant_profiles[profile_id] = profile
         cell.profile_id = profile_id
 
@@ -781,6 +869,9 @@ class FarmingRobot:
             "seed_count": self.planter.seed_count,
             "total_requested_seeds": self.total_requested_seeds(),
             "current_cell_index": self.current_cell_index,
+            "planting_errors": self.planting_errors,
+            "last_error": self.last_error,
+            "planted_counts": self.planted_counts,
         }
 
     def render_app(self) -> str:
@@ -953,7 +1044,7 @@ function renderGrid() {{
         const profile = (latestState.plant_profiles || []).find(p => p.profile_id === cell.profile_id);
         const title = profile ? `${{profile.plant_type}} — ${{profile.profile_id}}` : `${{cell.plant}} — pending`;
         const thumbnail = profile && profile.img
-            ? `<img src="/thumbs/${{encodeURIComponent(profile.img)}}" alt="${{esc(profile.plant_type)}}" loading="eager">`
+            ? `<img src="/thumbs/${{profile.img.split('/').map(encodeURIComponent).join('/')}}" alt="${{esc(profile.plant_type)}}" loading="eager">`
             : '';
 
         return `<button class="slot ${{cell.status === 'planted' ? 'planted' : ''}}" title="${{esc(title)}}" style="left:${{left}}%;top:${{top}}%" onclick="showProfile('${{cell.profile_id || ''}}')">${{thumbnail}}</button>`;
@@ -966,7 +1057,7 @@ function showProfile(id) {{
     document.getElementById('profile').innerHTML = `
       <h3>${{esc(profile.plant_type)}} <small>(${{esc(profile.profile_id)}})</small></h3>
       <table>
-      <tr><th>Img</th><td>${{profile.img}}</td></tr>
+      <tr><th>Img</th><td><img src="/thumbs/${{profile.img.split('/').map(encodeURIComponent).join('/')}}" alt="${{esc(profile.plant_type)}}" style="width:80px;height:80px;object-fit:contain"></td></tr>
       <tr><th>Age</th><td>${{profile.age_days}} days</td></tr>
       <tr><th>Planted</th><td>${{esc(profile.planted_at)}}</td></tr>
       <tr><th>Location</th><td>(${{profile.x_m}}m, ${{profile.y_m}}m)</td></tr>
@@ -984,8 +1075,8 @@ function renderProfiles() {{
     const profiles = latestState.plant_profiles || [];
     const el = document.getElementById('profiles');
     if (!profiles.length) {{ el.innerHTML = '<p>No plant profiles yet. Profiles are created as each seed is planted.</p>'; return; }}
-    el.innerHTML = `<table><tr><th>ID</th><th>Type</th><th>Age</th><th>Location</th><th>Status</th></tr>` +
-      profiles.map(p => `<tr><td>${{esc(p.profile_id)}}</td><td>${{esc(p.plant_type)}}</td><td>${{p.age_days}} days</td><td>(${{p.x_m}}, ${{p.y_m}})</td><td>${{esc(p.health_status)}}</td></tr>`).join('') + '</table>';
+    el.innerHTML = `<table><tr><th>Image</th><th>ID</th><th>Type</th><th>Age</th><th>Location</th><th>Status</th></tr>` +
+      profiles.map(p => `<tr><td><img src="/thumbs/${{p.img.split('/').map(encodeURIComponent).join('/')}}" alt="${{esc(p.plant_type)}}" style="width:48px;height:48px;object-fit:contain"></td><td>${{esc(p.profile_id)}}</td><td>${{esc(p.plant_type)}}</td><td>${{p.age_days}} days</td><td>(${{p.x_m}}, ${{p.y_m}})</td><td>${{esc(p.health_status)}}</td></tr>`).join('') + '</table>';
 }}
 
 function showError(message) {{ document.getElementById('error').textContent = message; }}
