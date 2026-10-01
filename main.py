@@ -38,7 +38,8 @@ from datetime import datetime
 from enum import Enum
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
+import mimetypes
 import re
 import os
 
@@ -49,6 +50,7 @@ import os
 
 APP_HOST = "127.0.0.1"
 APP_PORT = 8080
+THUMBS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "thumbs")
 DEMO_PLOT_WIDTH_M = 6.0
 DEMO_PLOT_LENGTH_M = 8.0
 
@@ -429,7 +431,40 @@ class AppServer:
                 if path == "/":
                     self._send_html(robot.render_app())
                     return
+                if path.startswith("/thumbs/"):
+                    self._send_thumbnail(path)
+                    return
                 self._send_json({"error": "not found"}, 404)
+
+            def _send_thumbnail(self, path: str):
+                requested_name = unquote(path[len("/thumbs/"):])
+                if not requested_name or "/" in requested_name or "\\" in requested_name:
+                    self._send_json({"error": "invalid thumbnail path"}, 400)
+                    return
+
+                thumbnail_path = os.path.realpath(os.path.join(THUMBS_DIR, requested_name))
+                thumbs_root = os.path.realpath(THUMBS_DIR)
+                if not thumbnail_path.startswith(thumbs_root + os.sep):
+                    self._send_json({"error": "invalid thumbnail path"}, 400)
+                    return
+                if not os.path.isfile(thumbnail_path):
+                    self._send_json({"error": "thumbnail not found"}, 404)
+                    return
+
+                try:
+                    with open(thumbnail_path, "rb") as image_file:
+                        body = image_file.read()
+                except OSError:
+                    self._send_json({"error": "unable to read thumbnail"}, 500)
+                    return
+
+                content_type = mimetypes.guess_type(thumbnail_path)[0] or "application/octet-stream"
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Cache-Control", "public, max-age=3600")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
 
             def _send_html(self, html: str):
                 body = html.encode("utf-8")
@@ -773,8 +808,9 @@ button.danger {{ background:#fff0f0; }}
 .badge {{ display:inline-block; padding:5px 9px; border-radius:999px; background:#e8f2df; }}
 #error {{ color:#a21c1c; min-height:1.3em; }}
 #grid {{ position:relative; width:100%; max-width:900px; aspect-ratio: 6 / 8; background:#edf4e7; border:3px solid #687b5f; overflow:hidden; border-radius:10px; }}
-.slot {{ position:absolute; width:20px; height:20px; transform:translate(-50%,-50%); border-radius:50%; border:2px solid #335b2d; background:#cde4bd; cursor:pointer; box-sizing:border-box; font-size:0; }}
-.slot.planted {{ background:#4e873d; }}
+.slot {{ position:absolute; width:44px; height:44px; transform:translate(-50%,-50%); border-radius:50%; border:2px solid #335b2d; background:#cde4bd; cursor:pointer; box-sizing:border-box; font-size:0; display:flex; align-items:center; justify-content:center; padding:4px; overflow:hidden; }}
+.slot.planted {{ background:#ffffff; }}
+.slot img {{ width:100%; height:100%; object-fit:contain; display:block; pointer-events:none; }}
 .slot.selected {{ outline:3px solid #d29b22; }}
 #profile {{ min-height:120px; }}
 small {{ color:#5f6b5b; }}
@@ -910,12 +946,17 @@ function renderGrid() {{
     const cells = latestState.planting_cells || [];
     const plot = latestState.plot;
     if (!plot || !cells.length) {{ grid.innerHTML = '<p style="padding:20px">The quantity-driven grid will appear after plan confirmation.</p>'; return; }}
+
     grid.innerHTML = cells.map((cell, index) => {{
         const left = (cell.x_m / plot.width_m) * 100;
         const top = (cell.y_m / plot.length_m) * 100;
-        const profile = latestState.plant_profiles.find(p => p.profile_id === cell.profile_id);
+        const profile = (latestState.plant_profiles || []).find(p => p.profile_id === cell.profile_id);
         const title = profile ? `${{profile.plant_type}} — ${{profile.profile_id}}` : `${{cell.plant}} — pending`;
-        return `<button class="slot ${{cell.status === 'planted' ? 'planted' : ''}}" title="${{esc(title)}}" style="left:${{left}}%;top:${{top}}%" onclick="showProfile('${{cell.profile_id || ''}}')">${{index + 1}}</button>`;
+        const thumbnail = profile && profile.img
+            ? `<img src="/thumbs/${{encodeURIComponent(profile.img)}}" alt="${{esc(profile.plant_type)}}" loading="eager">`
+            : '';
+
+        return `<button class="slot ${{cell.status === 'planted' ? 'planted' : ''}}" title="${{esc(title)}}" style="left:${{left}}%;top:${{top}}%" onclick="showProfile('${{cell.profile_id || ''}}')">${{thumbnail}}</button>`;
     }}).join('');
 }}
 
