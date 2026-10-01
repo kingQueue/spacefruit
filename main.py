@@ -1097,7 +1097,10 @@ function renderProfiles() {{
     const el = document.getElementById('profiles');
     if (!profiles.length) {{ el.innerHTML = '<p>No plant profiles yet. Profiles are created as each seed is planted.</p>'; return; }}
     el.innerHTML = `<table><tr><th>Image</th><th>ID</th><th>Type</th><th>Age</th><th>Location</th><th>Status</th></tr>` +
-      profiles.map(p => `<tr><td><img src="/thumbs/${{p.img.split('/').map(encodeURIComponent).join('/')}}" alt="${{esc(p.plant_type)}}" style="width:48px;height:48px;object-fit:contain"></td><td>${{esc(p.profile_id)}}</td><td>${{esc(p.plant_type)}}</td><td>${{p.age_days}} days</td><td>(${{p.x_m}}, ${{p.y_m}})</td><td>${{esc(p.health_status)}}</td></tr>`).join('') + '</table>';
+      profiles.map(p => {{
+        const image = p.img ? `<img src="/thumbs/${{p.img.split('/').map(encodeURIComponent).join('/')}}" alt="${{esc(p.plant_type)}}" style="width:48px;height:48px;object-fit:contain">` : '<span>No image</span>';
+        return `<tr><td>${{image}}</td><td>${{esc(p.profile_id)}}</td><td>${{esc(p.plant_type)}}</td><td>${{p.age_days}} days</td><td>(${{p.x_m}}, ${{p.y_m}})</td><td>${{esc(p.health_status)}}</td></tr>`;
+      }}).join('') + '</table>';
 }}
 
 function showError(message) {{ document.getElementById('error').textContent = message; }}
