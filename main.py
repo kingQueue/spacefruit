@@ -909,6 +909,8 @@ button.danger {{ background:#fff0f0; }}
 .slot.planted {{ background:#ffffff; }}
 .slot img {{ width:100%; height:100%; object-fit:contain; display:block; pointer-events:none; }}
 .slot.selected {{ outline:3px solid #d29b22; }}
+.profile-row {{ cursor:pointer; }}
+.profile-row:hover {{ background:#f3f7ef; }}
 #profile {{ min-height:120px; }}
 small {{ color:#5f6b5b; }}
 table {{ border-collapse:collapse; width:100%; }}
@@ -1099,7 +1101,7 @@ function renderProfiles() {{
     el.innerHTML = `<table><tr><th>Image</th><th>ID</th><th>Type</th><th>Age</th><th>Location</th><th>Status</th></tr>` +
       profiles.map(p => {{
         const image = p.img ? `<img src="/thumbs/${{p.img.split('/').map(encodeURIComponent).join('/')}}" alt="${{esc(p.plant_type)}}" style="width:48px;height:48px;object-fit:contain">` : '<span>No image</span>';
-        return `<tr><td>${{image}}</td><td>${{esc(p.profile_id)}}</td><td>${{esc(p.plant_type)}}</td><td>${{p.age_days}} days</td><td>(${{p.x_m}}, ${{p.y_m}})</td><td>${{esc(p.health_status)}}</td></tr>`;
+        return `<tr class="profile-row" onclick="showProfile('${{p.profile_id}}')" title="Open plant profile"><td>${{image}}</td><td>${{esc(p.profile_id)}}</td><td>${{esc(p.plant_type)}}</td><td>${{p.age_days}} days</td><td>(${{p.x_m}}, ${{p.y_m}})</td><td>${{esc(p.health_status)}}</td></tr>`;
       }}).join('') + '</table>';
 }}
 
