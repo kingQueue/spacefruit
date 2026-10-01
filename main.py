@@ -39,6 +39,8 @@ from enum import Enum
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Optional
 from urllib.parse import urlparse
+import re
+import os
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +117,7 @@ class PlantingCell:
 @dataclass
 class PlantProfile:
     profile_id: str
+    img: str
     plant_type: str
     age_days: int
     planted_at: str
@@ -672,6 +675,25 @@ class FarmingRobot:
             self.create_profile_for_cell(cell)
             print(f"[ROBOT] Progress: {index}/{total}")
 
+    def add_profile_img(self, plant):
+        for img in os.listdir("./thumbs"):
+            # Remove the file extension
+            img_name = re.sub(r"\.svg$", "", img, flags=re.IGNORECASE)
+
+            # Normalize spaces/underscores/hyphens
+            img_name = re.sub(r"[\s_-]+", " ", img_name).strip().lower()
+
+            # Normalize the plant name the same way
+            plant_name = re.sub(r"[\s_-]+", " ", plant).strip().lower()
+
+            print(img_name, " ", plant_name)
+
+            if img_name == plant_name:
+                return img
+
+        return None
+            
+
     def create_profile_for_cell(self, cell: PlantingCell):
         assert self.environment is not None
         catalog = CATALOG_BY_NAME[cell.plant]
@@ -679,6 +701,7 @@ class FarmingRobot:
         planted_at = datetime.now().astimezone().isoformat(timespec="seconds")
         profile = PlantProfile(
             profile_id=profile_id,
+            img=self.add_profile_img(cell.plant),
             plant_type=cell.plant,
             age_days=0,
             planted_at=planted_at,
@@ -902,6 +925,7 @@ function showProfile(id) {{
     document.getElementById('profile').innerHTML = `
       <h3>${{esc(profile.plant_type)}} <small>(${{esc(profile.profile_id)}})</small></h3>
       <table>
+      <tr><th>Img</th><td>${{profile.img}}</td></tr>
       <tr><th>Age</th><td>${{profile.age_days}} days</td></tr>
       <tr><th>Planted</th><td>${{esc(profile.planted_at)}}</td></tr>
       <tr><th>Location</th><td>(${{profile.x_m}}m, ${{profile.y_m}}m)</td></tr>
