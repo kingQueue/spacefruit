@@ -558,6 +558,7 @@ class FarmingRobot:
 
         self.confirmed = False
         self.current_cell_index = 0
+        self.state_revision = 0
         self.message = "Waiting for start button."
         self.app_server = AppServer(self, app_host, app_port) if start_server else None
 
@@ -642,6 +643,7 @@ class FarmingRobot:
             self.plant_all()
             self.state = RobotState.COMPLETE
             self.message = "Planting sequence complete. Plant profiles are ready."
+            self.state_revision += 1
             print("\n[ROBOT] Planting sequence complete. Plant profiles created.")
         except KeyboardInterrupt:
             self.state = RobotState.ERROR
@@ -789,6 +791,7 @@ class FarmingRobot:
                 error = PlantingStepError("PROFILE_PLANT_MISMATCH", index, cell.plant, "profile_validation", f"profile says {profile.plant_type!r}")
                 cell.error = str(error); self.planting_errors.append(str(error)); self.last_error = str(error); raise error
             self.planted_counts[cell.plant] += 1
+            self.state_revision += 1
             print(f"[ROBOT] Seed {index}/{total} completed: {cell.plant}")
         self.validate_planting_complete()
     @staticmethod
@@ -869,6 +872,7 @@ class FarmingRobot:
             "seed_count": self.planter.seed_count,
             "total_requested_seeds": self.total_requested_seeds(),
             "current_cell_index": self.current_cell_index,
+            "state_revision": self.state_revision,
             "planting_errors": self.planting_errors,
             "last_error": self.last_error,
             "planted_counts": self.planted_counts,
@@ -965,15 +969,29 @@ function esc(value) {{
     return String(value ?? '').replace(/[&<>'"]/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}}[c]));
 }}
 
+let latestRevision = -1;
+let refreshInFlight = false;
+
 async function refresh() {{
-    latestState = await api('/api/state');
-    document.getElementById('state').textContent = latestState.state;
+    if (refreshInFlight) return;
+    refreshInFlight = true;
+    try {{
+      const nextState = await api('/api/state');
+      const revision = Number(nextState.state_revision ?? 0);
+      // Never let a slower/older response overwrite a newer planting state.
+      if (revision < latestRevision) return;
+      latestRevision = revision;
+      latestState = nextState;
+      document.getElementById('state').textContent = latestState.state;
     document.getElementById('message').textContent = latestState.message;
     document.getElementById('totalSeeds').textContent = latestState.total_requested_seeds;
     renderPlan();
     renderSeedInputs();
     renderGrid();
-    renderProfiles();
+      renderProfiles();
+    }} finally {{
+      refreshInFlight = false;
+    }}
 }}
 
 function renderPlan() {{
