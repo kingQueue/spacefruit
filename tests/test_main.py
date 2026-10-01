@@ -96,12 +96,13 @@ class SpaceFruitPlantingTests(unittest.TestCase):
             (root / "png" / "Test Plant.png").write_bytes(b"png")
             (root / "default.svg").write_text("<svg/>", encoding="utf-8")
 
-            original = main.THUMBS_DIR
+            import spacefruit.robot as robot_module
+            original = robot_module.THUMBS_DIR
             try:
-                main.THUMBS_DIR = str(root)
+                robot_module.THUMBS_DIR = str(root)
                 self.assertEqual(self.robot.add_profile_img("Test Plant"), "png/Test Plant.png")
             finally:
-                main.THUMBS_DIR = original
+                robot_module.THUMBS_DIR = original
 
 
 if __name__ == "__main__":
