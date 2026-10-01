@@ -1,0 +1,228 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SpaceFruit Farming Robot</title>
+<style>
+:root { font-family: system-ui, sans-serif; color-scheme: light; }
+body { max-width: 1200px; margin: 0 auto; padding: 24px; background:#f5f7f2; color:#182018; }
+.card { background:white; border:1px solid #d7ddd2; border-radius:14px; padding:20px; margin:16px 0; box-shadow:0 2px 8px #0000000a; }
+h1 { margin-top:0; }
+button, select, input { padding:9px 11px; border-radius:8px; border:1px solid #aab4a5; font-size:15px; }
+button { cursor:pointer; background:#e8f2df; }
+button.primary { background:#315c2b; color:white; border-color:#315c2b; }
+button.danger { background:#fff0f0; }
+.row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+.plan-row { display:grid; grid-template-columns:1fr 110px 45px; gap:10px; align-items:center; padding:8px 0; border-bottom:1px solid #eee; }
+.badge { display:inline-block; padding:5px 9px; border-radius:999px; background:#e8f2df; }
+#error { color:#a21c1c; min-height:1.3em; }
+#grid { position:relative; width:100%; max-width:900px; aspect-ratio: 6 / 8; background:#edf4e7; border:3px solid #687b5f; overflow:hidden; border-radius:10px; }
+.slot { position:absolute; width:44px; height:44px; transform:translate(-50%,-50%); border-radius:50%; border:2px solid #335b2d; background:#cde4bd; cursor:pointer; box-sizing:border-box; font-size:0; display:flex; align-items:center; justify-content:center; padding:4px; overflow:hidden; }
+.slot.planted { background:#ffffff; }
+.slot img { width:100%; height:100%; object-fit:contain; display:block; pointer-events:none; }
+.slot.selected { outline:3px solid #d29b22; }
+.profile-row { cursor:pointer; }
+.profile-row:hover { background:#f3f7ef; }
+#profile { min-height:120px; }
+small { color:#5f6b5b; }
+table { border-collapse:collapse; width:100%; }
+th,td { padding:8px; border-bottom:1px solid #e5e8e2; text-align:left; }
+</style>
+</head>
+<body>
+<h1>🌱 SpaceFruit Farming Robot</h1>
+<div class="card"><strong>Robot:</strong> <span id="state" class="badge">loading</span><p id="message"></p></div>
+
+<div class="card">
+<h2>1. Edit planting plan</h2>
+<p>Each quantity is an exact number of seeds/planting slots. Remove one seed at a time or add any plant from the 40-plant catalog.</p>
+<div class="row">
+<select id="plantSelect">{{CATALOG_OPTIONS}}</select>
+<input id="addCount" type="number" min="1" max="1000" value="1" style="width:90px">
+<button onclick="addPlant()">Add seeds</button>
+</div>
+<div id="plan"></div>
+<p><strong>Total seeds:</strong> <span id="totalSeeds">0</span></p>
+<button class="primary" onclick="confirmPlan()">Confirm planting plan</button>
+<div id="error"></div>
+</div>
+
+<div class="card">
+<h2>2. Load exact seeds</h2>
+<p>The robot will not start planting until the loaded quantity matches the plan for every plant type.</p>
+<div id="seedInputs"></div>
+<button class="primary" onclick="loadSeeds()">Verify loaded seeds</button>
+</div>
+
+<div class="card">
+<h2>3. Plot / planting grid</h2>
+<p>Every circle is one physical planting slot. Click a slot after planting to view its plant profile.</p>
+<div id="grid"></div>
+<small>Grid coordinates are relative to the robot's startup position (0,0). Band spacing follows the selected plant type's spacing.</small>
+</div>
+
+<div class="card">
+<h2>4. Plant profile</h2>
+<div id="profile">Click a planted slot.</div>
+</div>
+
+<div class="card">
+<h2>Plant profiles</h2>
+<div id="profiles"></div>
+</div>
+
+<script>
+let latestState = null;
+
+async function api(path, method='GET', body=null) {
+    const options = {method, cache: 'no-store', headers: {'Content-Type':'application/json', 'Cache-Control':'no-cache'}};
+    if (body !== null) options.body = JSON.stringify(body);
+    const requestPath = method === 'GET' ? path + (path.includes('?') ? '&' : '?') + '_ts=' + Date.now() : path;
+    const response = await fetch(requestPath, options);
+    return await response.json();
+}
+
+function esc(value) {
+    return String(value ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+}
+
+let latestRevision = -1;
+let refreshInFlight = false;
+
+async function refresh() {
+    if (refreshInFlight) return;
+    refreshInFlight = true;
+    try {
+      const nextState = await api('/api/state');
+      const revision = Number(nextState.state_revision ?? 0);
+      // Never let a slower/older response overwrite a newer planting state.
+      if (revision < latestRevision) return;
+      latestRevision = revision;
+      latestState = nextState;
+      document.getElementById('state').textContent = latestState.state;
+    document.getElementById('message').textContent = latestState.message;
+    document.getElementById('totalSeeds').textContent = latestState.total_requested_seeds;
+    renderPlan();
+    renderSeedInputs();
+    renderGrid();
+      renderProfiles();
+    } finally {
+      refreshInFlight = false;
+    }
+}
+
+function renderPlan() {
+    const entries = Object.entries(latestState.seed_plan || {});
+    const el = document.getElementById('plan');
+    if (!entries.length) { el.innerHTML = '<p>No seeds selected yet.</p>'; return; }
+    el.innerHTML = entries.map(([plant, count]) => `
+      <div class="plan-row">
+        <strong>${esc(plant)}</strong>
+        <span>${count} seed${count === 1 ? '' : 's'}</span>
+        <button class="danger" onclick="removePlant('${encodeURIComponent(plant)}')">−1</button>
+      </div>`).join('');
+}
+
+function renderSeedInputs() {
+    const entries = Object.entries(latestState.seed_plan || {});
+    const el = document.getElementById('seedInputs');
+    if (!entries.length) { el.innerHTML = '<p>Confirm a plan first.</p>'; return; }
+    el.innerHTML = entries.map(([plant, count]) => `
+      <div class="row" style="margin:8px 0">
+        <strong style="width:180px">${esc(plant)}</strong>
+        <span>Need ${count}</span>
+        <input id="seed-${encodeURIComponent(plant)}" type="number" min="0" value="${count}" style="width:100px">
+      </div>`).join('');
+}
+
+async function addPlant() {
+    clearError();
+    const plant = document.getElementById('plantSelect').value;
+    const count = Number(document.getElementById('addCount').value);
+    const result = await api('/api/add-plant', 'POST', {plant, count});
+    if (!result.ok) showError(result.error); else await refresh();
+}
+
+async function removePlant(encodedPlant) {
+    clearError();
+    const plant = decodeURIComponent(encodedPlant);
+    const result = await api('/api/remove-plant', 'POST', {plant});
+    if (!result.ok) showError(result.error); else await refresh();
+}
+
+async function confirmPlan() {
+    clearError();
+    const result = await api('/api/confirm', 'POST');
+    if (!result.ok) { showError(result.error); return; }
+    await refresh();
+}
+
+async function loadSeeds() {
+    clearError();
+    const counts = {};
+    for (const [plant, count] of Object.entries(latestState.seed_plan || {})) {
+        counts[plant] = Number(document.getElementById('seed-' + encodeURIComponent(plant)).value);
+    }
+    const result = await api('/api/load-seeds', 'POST', {counts});
+    if (!result.ok) showError(result.error); else await refresh();
+}
+
+function renderGrid() {
+    const grid = document.getElementById('grid');
+    const cells = latestState.planting_cells || [];
+    const plot = latestState.plot;
+    if (!plot || !cells.length) { grid.innerHTML = '<p style="padding:20px">The quantity-driven grid will appear after plan confirmation.</p>'; return; }
+
+    grid.innerHTML = cells.map((cell, index) => {
+        const left = (cell.x_m / plot.width_m) * 100;
+        const top = (cell.y_m / plot.length_m) * 100;
+        const profile = (latestState.plant_profiles || []).find(p => p.profile_id === cell.profile_id);
+        const title = profile ? `${profile.plant_type} — ${profile.profile_id}` : `${cell.plant} — pending`;
+        const thumbnail = profile && profile.img
+            ? `<img src="/thumbs/${profile.img.split('/').map(encodeURIComponent).join('/')}" alt="${esc(profile.plant_type)}" loading="eager">`
+            : '';
+
+        return `<button class="slot ${cell.status === 'planted' ? 'planted' : ''}" title="${esc(title)}" style="left:${left}%;top:${top}%" onclick="showProfile('${cell.profile_id || ''}')">${thumbnail}</button>`;
+    }).join('');
+}
+
+function showProfile(id) {
+    const profile = (latestState.plant_profiles || []).find(p => p.profile_id === id);
+    if (!profile) { document.getElementById('profile').innerHTML = '<p>This slot has not been planted yet.</p>'; return; }
+    document.getElementById('profile').innerHTML = `
+      <h3>${esc(profile.plant_type)} <small>(${esc(profile.profile_id)})</small></h3>
+      <table>
+      <tr><th>Img</th><td><img src="/thumbs/${profile.img.split('/').map(encodeURIComponent).join('/')}" alt="${esc(profile.plant_type)}" style="width:80px;height:80px;object-fit:contain"></td></tr>
+      <tr><th>Age</th><td>${profile.age_days} days</td></tr>
+      <tr><th>Planted</th><td>${esc(profile.planted_at)}</td></tr>
+      <tr><th>Location</th><td>(${profile.x_m}m, ${profile.y_m}m)</td></tr>
+      <tr><th>Spacing</th><td>${profile.spacing_m}m</td></tr>
+      <tr><th>Planting depth</th><td>${profile.planting_depth_m}m</td></tr>
+      <tr><th>Sunlight</th><td>${esc(profile.sunlight)}</td></tr>
+      <tr><th>Water needs</th><td>${esc(profile.water_needs)}</td></tr>
+      <tr><th>Typical germination</th><td>${profile.typical_germination_days} days</td></tr>
+      <tr><th>Conditions at planting</th><td>${profile.temperature_at_planting_c}°C / ${profile.humidity_at_planting_percent}% RH</td></tr>
+      <tr><th>Health</th><td>${esc(profile.health_status)}</td></tr>
+      </table>`;
+}
+
+function renderProfiles() {
+    const profiles = latestState.plant_profiles || [];
+    const el = document.getElementById('profiles');
+    if (!profiles.length) { el.innerHTML = '<p>No plant profiles yet. Profiles are created as each seed is planted.</p>'; return; }
+    el.innerHTML = `<table><tr><th>Image</th><th>ID</th><th>Type</th><th>Age</th><th>Location</th><th>Status</th></tr>` +
+      profiles.map(p => {
+        const image = p.img ? `<img src="/thumbs/${p.img.split('/').map(encodeURIComponent).join('/')}" alt="${esc(p.plant_type)}" style="width:48px;height:48px;object-fit:contain">` : '<span>No image</span>';
+        return `<tr class="profile-row" onclick="showProfile('${p.profile_id}')" title="Open plant profile"><td>${image}</td><td>${esc(p.profile_id)}</td><td>${esc(p.plant_type)}</td><td>${p.age_days} days</td><td>(${p.x_m}, ${p.y_m})</td><td>${esc(p.health_status)}</td></tr>`;
+      }).join('') + '</table>';
+}
+
+function showError(message) { document.getElementById('error').textContent = message; }
+function clearError() { document.getElementById('error').textContent = ''; }
+
+setInterval(refresh, 1000);
+refresh();
+</script>
+</body>
+</html>
