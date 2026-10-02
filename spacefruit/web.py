@@ -124,6 +124,10 @@ class AppServer:
                         result = robot.load_seeds(data.get("counts", {}))
                         self._send_json(result, 200 if result["ok"] else 400)
                         return
+                    if path == "/api/start-monitoring":
+                        result = robot.start_monitoring()
+                        self._send_json(result, 200 if result["ok"] else 400)
+                        return
                     self._send_json({"error": "not found"}, 404)
                 except Exception as exc:
                     self._send_json({"ok": False, "error": str(exc)}, 400)
