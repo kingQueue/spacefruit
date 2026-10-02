@@ -86,6 +86,28 @@ class SpaceFruitApiTests(SimpleTestCase):
             self.assertEqual(state["operation"]["status"], "completed")
             self.assertEqual(state["monitoring"]["completed"], 1)
 
+    def test_load_seeds_accepts_required_counts_and_planting_consumes_them(self):
+        with patch("spacefruit.hardware.time.sleep", return_value=None):
+            self.post("/api/start")
+            self.post("/api/add-plant", {"plant": "Tomato", "count": 2})
+            self.post("/api/add-plant", {"plant": "Lettuce", "count": 1})
+            self.post("/api/confirm")
+
+            result = self.post("/api/load-seeds", {
+                "counts": {"Tomato": 2, "Lettuce": 1},
+            })
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["loaded"], {"Tomato": 2, "Lettuce": 1})
+
+            self.post("/api/start-planting")
+            views.robot.workflow_thread.join(timeout=5)
+
+            state = self.client.get("/api/state").json()
+            self.assertEqual(state["state"], "complete")
+            self.assertEqual(state["operation"]["status"], "completed")
+            self.assertEqual(state["seed_count"], 0)
+            self.assertTrue(all(c["status"] == "planted" for c in state["planting_cells"]))
+
     def test_planting_is_not_reported_complete_while_worker_is_running(self):
         with patch("spacefruit.hardware.time.sleep", return_value=None):
             self.post("/api/start")
