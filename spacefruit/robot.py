@@ -6,12 +6,15 @@ import os
 import re
 import time
 import uuid
+import threading
 from dataclasses import asdict
 from datetime import datetime
 from typing import Optional
 
 from .catalog import CATALOG_BY_NAME, PLANT_CATALOG
-from .hardware import GPSSensor, Planter, PlotMapper, StartButton, TemperatureHumiditySensor
+from .hardware import GPSSensor, NavigationController, Planter, PlotMapper, StartButton, TemperatureHumiditySensor
+from .inspection import PlantHealthInspector
+from .vision import PlaceholderCamera, PlaceholderPlantHealthModel
 from .models import EnvironmentReading, GPSReading, PlantProfile, PlantRecommendation, PlantingCell, PlantingStepError, Plot, RobotState
 from .planner import GridPlanner
 from .recommendations import PlantRecommendationEngine
@@ -30,6 +33,12 @@ class FarmingRobot:
         self.recommender = PlantRecommendationEngine()
         self.grid_planner = GridPlanner()
         self.planter = Planter()
+        self.navigator = NavigationController()
+        self.camera = PlaceholderCamera()
+        self.health_model = PlaceholderPlantHealthModel()
+        self.health_inspector = PlantHealthInspector(
+            self.navigator, self.camera, self.health_model
+        )
 
         self.environment: Optional[EnvironmentReading] = None
         self.gps: Optional[GPSReading] = None
@@ -44,6 +53,10 @@ class FarmingRobot:
         self.planting_errors: list[str] = []
         self.last_error: Optional[str] = None
         self.planted_counts: dict[str, int] = {}
+        self.inspection_results = []
+        self.health_alerts: list[dict] = []
+        self.current_inspection_index = 0
+        self.inspection_thread: Optional[threading.Thread] = None
 
         self.confirmed = False
         self.current_cell_index = 0
@@ -334,6 +347,49 @@ class FarmingRobot:
         cell.profile_id = profile_id
 
     # ----------------------------
+    # Stage-two plant health inspection
+    # ----------------------------
+
+    def start_inspection(self) -> dict:
+        """Start an asynchronous inspection of every planted plant."""
+        if self.state not in {RobotState.COMPLETE, RobotState.INSPECTION_COMPLETE}:
+            return {
+                "ok": False,
+                "error": "Plant health inspection is available after planting is complete.",
+            }
+
+        if not self.plant_profiles:
+            return {"ok": False, "error": "No planted plant profiles are available to inspect."}
+
+        if self.inspection_thread and self.inspection_thread.is_alive():
+            return {"ok": False, "error": "A plant health inspection is already running."}
+
+        self.state = RobotState.INSPECTING
+        self.current_inspection_index = 0
+        self.health_alerts = []
+        self.inspection_results = []
+        self.message = "Starting plant health inspection..."
+        self.state_revision += 1
+
+        self.inspection_thread = threading.Thread(
+            target=self._run_inspection,
+            name="plant-health-inspection",
+            daemon=True,
+        )
+        self.inspection_thread.start()
+        return {"ok": True, "state": self.state.value}
+
+    def _run_inspection(self) -> None:
+        try:
+            self.health_inspector.inspect_all(self)
+        except Exception as exc:
+            self.state = RobotState.ERROR
+            self.last_error = str(exc)
+            self.message = f"Plant health inspection failed: {exc}"
+            self.state_revision += 1
+            print(f"[INSPECTION ERROR] {exc}")
+
+    # ----------------------------
     # Visualization / API
     # ----------------------------
 
@@ -365,5 +421,11 @@ class FarmingRobot:
             "planting_errors": self.planting_errors,
             "last_error": self.last_error,
             "planted_counts": self.planted_counts,
+            "inspection_results": [asdict(item) for item in self.inspection_results],
+            "health_alerts": self.health_alerts,
+            "current_inspection_index": self.current_inspection_index,
+            "inspection_running": bool(
+                self.inspection_thread and self.inspection_thread.is_alive()
+            ),
         }
 
