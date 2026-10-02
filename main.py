@@ -10,6 +10,7 @@ from spacefruit.catalog import *
 from spacefruit.hardware import *
 from spacefruit.recommendations import *
 from spacefruit.planner import *
+from spacefruit.monitoring import *
 from spacefruit.web import *
 from spacefruit.robot import *
 
