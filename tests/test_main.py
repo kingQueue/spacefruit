@@ -105,5 +105,40 @@ class SpaceFruitPlantingTests(unittest.TestCase):
                 robot_module.THUMBS_DIR = original
 
 
+    def test_monitoring_updates_health_and_removes_weeds(self):
+        self.prepare_plan(1)
+        with patch.object(main.time, "sleep", return_value=None):
+            self.robot.plant_all()
+
+        from spacefruit.monitoring import HealthAnalysis, WeedAnalysis, MonitoringWorkflow
+
+        class HealthModel:
+            def analyze(self, frame, profile):
+                return HealthAnalysis(True, ["possible nitrogen deficiency"], "Possible nitrogen deficiency")
+
+        class WeedModel:
+            def analyze(self, frame, cell):
+                return WeedAnalysis(True, 2, "Two weeds detected")
+
+        self.robot.state = main.RobotState.COMPLETE
+        workflow = MonitoringWorkflow(
+            self.robot,
+            health_model=HealthModel(),
+            weed_model=WeedModel(),
+        )
+        with patch("spacefruit.monitoring.time.sleep", return_value=None):
+            workflow.run()
+
+        profile = next(iter(self.robot.plant_profiles.values()))
+        cell = self.robot.planting_cells[0]
+        self.assertTrue(profile.health_issue_detected)
+        self.assertIn("possible nitrogen deficiency", profile.health_issues)
+        self.assertEqual(cell.weeds_detected, 2)
+        self.assertEqual(cell.weeds_removed, 2)
+        self.assertEqual(self.robot.monitoring["weeds_removed"], 2)
+        self.assertFalse(self.robot.monitoring["running"])
+        self.assertEqual(self.robot.state, main.RobotState.COMPLETE)
+
+
 if __name__ == "__main__":
     unittest.main()
