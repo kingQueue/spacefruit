@@ -258,6 +258,9 @@ function showProfile(id) {
       <tr><th>Typical germination</th><td>${profile.typical_germination_days} days</td></tr>
       <tr><th>Conditions at planting</th><td>${profile.temperature_at_planting_c}°C / ${profile.humidity_at_planting_percent}% RH</td></tr>
       <tr><th>Health</th><td>${esc(profile.health_status)}</td></tr>
+      <tr><th>Health issues</th><td>${profile.health_issues && profile.health_issues.length ? esc(profile.health_issues.join(", ")) : "None detected"}</td></tr>
+      <tr><th>Last monitored</th><td>${profile.last_monitored_at ? esc(profile.last_monitored_at) : "Not monitored yet"}</td></tr>
+      <tr><th>Weeds</th><td>${profile.weeds_removed || 0} removed / ${profile.weeds_detected || 0} detected at last visit</td></tr>
       </table>`;
 }
 
