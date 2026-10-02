@@ -105,5 +105,52 @@ class SpaceFruitPlantingTests(unittest.TestCase):
                 robot_module.THUMBS_DIR = original
 
 
+    def test_start_inspection_visits_every_planted_profile(self):
+        self.prepare_plan(3)
+        with patch.object(main.time, "sleep", return_value=None):
+            self.robot.plant_all()
+
+        self.robot.state = main.RobotState.COMPLETE
+        result = self.robot.start_inspection()
+        self.assertTrue(result["ok"], result)
+
+        self.robot.inspection_thread.join(timeout=2)
+
+        self.assertEqual(self.robot.state, main.RobotState.INSPECTION_COMPLETE)
+        self.assertEqual(len(self.robot.inspection_results), 3)
+        self.assertEqual(len(self.robot.health_alerts), 0)
+        self.assertTrue(all(
+            profile.last_inspected_at and profile.last_inspection_id
+            for profile in self.robot.plant_profiles.values()
+        ))
+
+    def test_inspection_surfaces_model_health_alert(self):
+        self.prepare_plan(1)
+        with patch.object(main.time, "sleep", return_value=None):
+            self.robot.plant_all()
+
+        class FakeDiseaseModel:
+            def analyze(self, frame, plant_type):
+                return main.DiseaseDetection(
+                    detected=True,
+                    condition="leaf spot",
+                    confidence=0.91,
+                    notes="test detection",
+                )
+
+        self.robot.health_model = FakeDiseaseModel()
+        self.robot.health_inspector.health_model = self.robot.health_model
+        self.robot.state = main.RobotState.COMPLETE
+
+        result = self.robot.start_inspection()
+        self.assertTrue(result["ok"], result)
+        self.robot.inspection_thread.join(timeout=2)
+
+        self.assertEqual(len(self.robot.health_alerts), 1)
+        self.assertEqual(self.robot.health_alerts[0]["condition"], "leaf spot")
+        profile = next(iter(self.robot.plant_profiles.values()))
+        self.assertIn("leaf spot", profile.health_status)
+
+
 if __name__ == "__main__":
     unittest.main()
