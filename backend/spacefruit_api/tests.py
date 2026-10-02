@@ -52,7 +52,6 @@ class SpaceFruitApiTests(SimpleTestCase):
             result = self.post("/api/start-planting")
             self.assertTrue(result["ok"])
 
-            thread = views.robot.monitoring_thread
             if views.robot.monitoring_thread:
                 thread.join(timeout=5)
 
