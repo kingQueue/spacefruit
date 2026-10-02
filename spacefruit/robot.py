@@ -6,6 +6,7 @@ import os
 import re
 import time
 import threading
+from dataclasses import dataclass
 import uuid
 from dataclasses import asdict
 from datetime import datetime
@@ -21,6 +22,16 @@ from .web import APP_HOST, APP_PORT, THUMBS_DIR, AppServer
 
 DEMO_PLOT_WIDTH_M = 6.0
 DEMO_PLOT_LENGTH_M = 8.0
+
+@dataclass
+class WorkflowOperation:
+    name: str = "idle"
+    status: str = "idle"
+    message: str = ""
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    error: Optional[str] = None
+    revision: int = 0
 
 class FarmingRobot:
     def __init__(self, start_server: bool = True, app_host: str = APP_HOST, app_port: int = APP_PORT):
@@ -54,10 +65,74 @@ class FarmingRobot:
         self.current_cell_index = 0
         self.state_revision = 0
         self.message = "Waiting for start button."
+        self.operation = WorkflowOperation()
+        self.operation_lock = threading.RLock()
         self.app_server = AppServer(self, app_host, app_port) if start_server else None
 
     def now_iso(self) -> str:
         return datetime.now().astimezone().isoformat(timespec="seconds")
+
+    def _begin_operation(self, name: str) -> None:
+        with self.operation_lock:
+            self.operation = WorkflowOperation(
+                name=name,
+                status="running",
+                message=f"{name} started.",
+                started_at=self.now_iso(),
+                revision=self.operation.revision + 1,
+            )
+
+    def _finish_operation(self, status: str, message: str, error: Optional[str] = None) -> None:
+        with self.operation_lock:
+            self.operation.status = status
+            self.operation.message = message
+            self.operation.error = error
+            self.operation.finished_at = self.now_iso()
+            self.operation.revision += 1
+
+    def start_workflow(self) -> dict:
+        if self.state != RobotState.WAITING_FOR_START:
+            return {"ok": False, "error": f"Workflow cannot start from {self.state.value}."}
+        if self.operation.status == "running":
+            return {"ok": False, "error": "A workflow operation is already running."}
+        self._begin_operation("setup")
+        try:
+            self.map_plot()
+            self.collect_environment()
+            self.make_recommendations()
+            self._finish_operation("completed", "Setup complete. Edit the planting plan.")
+            return {"ok": True, "state": self.state.value}
+        except Exception as exc:
+            self.state = RobotState.ERROR
+            self.last_error = str(exc)
+            self.message = str(exc)
+            self._finish_operation("error", str(exc), str(exc))
+            return {"ok": False, "error": str(exc)}
+
+    def start_planting(self) -> dict:
+        if self.state != RobotState.WAITING_FOR_SEEDS:
+            return {"ok": False, "error": f"Planting cannot start from {self.state.value}."}
+        if self.operation.status == "running":
+            return {"ok": False, "error": "A workflow operation is already running."}
+        self._begin_operation("planting")
+        def worker():
+            try:
+                self.create_planting_plan()
+                self.plant_all()
+                self.state = RobotState.COMPLETE
+                self.message = "Planting sequence complete. Plant profiles are ready."
+                self.state_revision += 1
+                self._finish_operation("completed", self.message)
+            except Exception as exc:
+                self.state = RobotState.ERROR
+                self.last_error = str(exc)
+                self.message = str(exc)
+                if str(exc) not in self.planting_errors:
+                    self.planting_errors.append(str(exc))
+                self._finish_operation("error", str(exc), str(exc))
+                self.state_revision += 1
+        threading.Thread(target=worker, name="spacefruit-planting", daemon=True).start()
+        return {"ok": True, "message": "Planting operation started."}
 
     def start_monitoring(self) -> dict:
         if self.state != RobotState.COMPLETE:
@@ -72,6 +147,7 @@ class FarmingRobot:
             name="spacefruit-monitoring",
             daemon=True,
         )
+        self._begin_operation("monitoring")
         self.monitoring_thread.start()
         return {"ok": True, "message": "Monitoring workflow started."}
 
@@ -85,6 +161,7 @@ class FarmingRobot:
             self.message = str(exc)
             self.planting_errors.append(str(exc))
             self.state_revision += 1
+            self._finish_operation("error", str(exc), str(exc))
 
     # ----------------------------
     # Planning edits
@@ -401,5 +478,6 @@ class FarmingRobot:
             "last_error": self.last_error,
             "planted_counts": self.planted_counts,
             "monitoring": self.monitoring,
+            "operation": self.operation.__dict__.copy(),
         }
 
