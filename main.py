@@ -1,21 +1,19 @@
-"""SpaceFruit compatibility entry point.
+"""SpaceFruit Django backend launcher.
 
-The application is now organized under the ``spacefruit`` package. This
-module re-exports the public classes so existing tests and ``python main.py``
-work without changes.
+The browser UI is now React and the HTTP API is served by Django.
+Run this file to start the backend on http://127.0.0.1:8000.
 """
 
-from spacefruit.models import *
-from spacefruit.catalog import *
-from spacefruit.hardware import *
-from spacefruit.recommendations import *
-from spacefruit.planner import *
-from spacefruit.monitoring import *
-from spacefruit.web import *
-from spacefruit.robot import *
+import os
+import sys
+from pathlib import Path
 
-def main():
-    FarmingRobot().run()
+ROOT = Path(__file__).resolve().parent
+BACKEND = ROOT / "backend"
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(BACKEND))
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "spacefruit_api.settings")
 
 if __name__ == "__main__":
-    main()
+    from django.core.management import execute_from_command_line
+    execute_from_command_line([sys.argv[0], "runserver", "127.0.0.1:8000", *sys.argv[1:]])
