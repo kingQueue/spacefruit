@@ -97,6 +97,15 @@ class PlantProfile:
     water_needs: str
     typical_germination_days: int
     health_status: str = "newly planted"
+    health_issues: list[str] = None
+    health_issue_detected: bool = False
+    last_monitored_at: Optional[str] = None
+    weeds_detected: int = 0
+    weeds_removed: int = 0
+
+    def __post_init__(self):
+        if self.health_issues is None:
+            self.health_issues = []
 
 
 class RobotState(str, Enum):
@@ -107,6 +116,7 @@ class RobotState(str, Enum):
     WAITING_FOR_SEEDS = "waiting_for_seeds"
     PLANTING = "planting"
     COMPLETE = "complete"
+    MONITORING = "monitoring"
     ERROR = "error"
 
 
