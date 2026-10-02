@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import main
+from spacefruit.vision import DiseaseDetection
 
 
 class SpaceFruitPlantingTests(unittest.TestCase):
@@ -131,7 +132,7 @@ class SpaceFruitPlantingTests(unittest.TestCase):
 
         class FakeDiseaseModel:
             def analyze(self, frame, plant_type):
-                return main.DiseaseDetection(
+                return DiseaseDetection(
                     detected=True,
                     condition="leaf spot",
                     confidence=0.91,
