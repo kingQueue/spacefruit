@@ -14,6 +14,7 @@ export default function App() {
   const [error,setError]=useState("");
   const [plant,setPlant]=useState("");
   const [count,setCount]=useState(1);
+  const [seedCounts,setSeedCounts]=useState({});
 
   const refresh=useCallback(async()=>{try{setState(await api("/api/state"));setError("");}catch(e){setError(e.message);}},[]);
   useEffect(()=>{refresh();const id=setInterval(refresh,500);return()=>clearInterval(id);},[refresh]);
@@ -41,7 +42,7 @@ export default function App() {
 
     <section className="card"><h2>Seeds</h2><p>Required: {state.total_requested_seeds||0} | Loaded: {state.seed_count||0}</p>
       {Object.entries(state.seed_plan).map(([name,qty])=><label className="seed-row" key={name}>{name}<input type="number" min="0" value={state.loaded_seed_counts?.[name] ?? qty} onChange={e=>setState(s=>({...s,loaded_seed_counts:{...s.loaded_seed_counts,[name]:Number(e.target.value)}}))}/></label>)}
-      <button disabled={state.state!=="waiting_for_seeds"} onClick={()=>post("/api/load-seeds",{counts:state.loaded_seed_counts})}>Load / verify seeds</button>
+      <button disabled={state.state!=="waiting_for_seeds"} onClick={()=>post("/api/load-seeds",{counts:{...state.loaded_seed_counts,...seedCounts}})}>Load / verify seeds</button>
       <button disabled={state.state!=="waiting_for_seeds" || running} onClick={()=>post("/api/start-planting")}>Start planting</button>
     </section>
 
