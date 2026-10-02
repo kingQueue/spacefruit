@@ -22,6 +22,8 @@ button.danger { background:#fff0f0; }
 .slot.planted { background:#ffffff; }
 .slot img { width:100%; height:100%; object-fit:contain; display:block; pointer-events:none; }
 .slot.selected { outline:3px solid #d29b22; }
+.slot.health-issue { border:4px solid #c62828; box-shadow:0 0 0 3px #ffcdd2; }
+.slot.weeds { box-shadow:0 0 0 3px #8a6d1d; }
 .profile-row { cursor:pointer; }
 .profile-row:hover { background:#f3f7ef; }
 #profile { min-height:120px; }
@@ -67,6 +69,18 @@ th,td { padding:8px; border-bottom:1px solid #e5e8e2; text-align:left; }
 <div id="profile">Click a planted slot.</div>
 </div>
 
+
+<div class="card">
+<h2>Monitoring</h2>
+<p>The robot drives to every planted profile, captures a camera frame, sends it through the health and weed visual-model interfaces, updates affected profiles, and plucks detected weeds.</p>
+<div class="row">
+<button id="monitorButton" class="primary" onclick="startMonitoring()">Start monitoring</button>
+<span id="monitorStatus" class="badge">Ready</span>
+</div>
+<div id="monitorDetails" style="margin-top:12px"></div>
+<small>Visual models and camera capture are currently adapters/placeholders. They are isolated in <code>spacefruit/monitoring.py</code> so a real camera and CV/ML model can be connected later.</small>
+</div>
+
 <div class="card">
 <h2>Plant profiles</h2>
 <div id="profiles"></div>
@@ -102,6 +116,7 @@ async function refresh() {
       latestState = nextState;
       document.getElementById('state').textContent = latestState.state;
     document.getElementById('message').textContent = latestState.message;
+    renderMonitoring();
     document.getElementById('totalSeeds').textContent = latestState.total_requested_seeds;
     renderPlan();
     renderSeedInputs();
@@ -183,8 +198,47 @@ function renderGrid() {
             ? `<img src="/thumbs/${profile.img.split('/').map(encodeURIComponent).join('/')}" alt="${esc(profile.plant_type)}" loading="eager">`
             : '';
 
-        return `<button class="slot ${cell.status === 'planted' ? 'planted' : ''}" title="${esc(title)}" style="left:${left}%;top:${top}%" onclick="showProfile('${cell.profile_id || ''}')">${thumbnail}</button>`;
+        const healthIssue = profile && profile.health_issue_detected;
+        const weeds = Number(cell.weeds_detected || 0) > 0;
+        const issueClass = healthIssue ? ' health-issue' : '';
+        const weedClass = weeds ? ' weeds' : '';
+        return `<button class="slot ${cell.status === 'planted' ? 'planted' : ''}${issueClass}${weedClass}" title="${esc(title)}" style="left:${left}%;top:${top}%" onclick="showProfile('${cell.profile_id || ''}')">${thumbnail}</button>`;
     }).join('');
+}
+
+async function startMonitoring() {
+    clearError();
+    const result = await api('/api/start-monitoring', 'POST', {});
+    if (!result.ok) {
+        showError(result.error);
+        return;
+    }
+    document.getElementById('monitorButton').disabled = true;
+    await refresh();
+}
+
+function renderMonitoring() {
+    const monitor = latestState.monitoring || {};
+    const button = document.getElementById('monitorButton');
+    const status = document.getElementById('monitorStatus');
+    const details = document.getElementById('monitorDetails');
+    const running = Boolean(monitor.running);
+    button.disabled = running || latestState.state !== 'complete';
+    if (running) {
+        status.textContent = `Running ${monitor.completed || 0}/${monitor.total || 0}`;
+    } else if (monitor.completed > 0) {
+        status.textContent = 'Complete';
+    } else {
+        status.textContent = latestState.state === 'complete' ? 'Ready' : 'Planting must finish first';
+    }
+    details.innerHTML = `
+      <strong>Plants checked:</strong> ${monitor.completed || 0}/${monitor.total || 0}
+      &nbsp; <strong>Health issues:</strong> ${monitor.issues_detected || 0}
+      &nbsp; <strong>Weeds removed:</strong> ${monitor.weeds_removed || 0}
+      ${monitor.current_profile_id ? `<br><strong>Current plant:</strong> ${esc(monitor.current_profile_id)}` : ''}
+      ${monitor.last_health_result ? `<br><strong>Last health:</strong> ${esc(monitor.last_health_result.summary)}` : ''}
+      ${monitor.last_weed_result ? `<br><strong>Last weeds:</strong> ${esc(monitor.last_weed_result.summary)}` : ''}
+    `;
 }
 
 function showProfile(id) {
