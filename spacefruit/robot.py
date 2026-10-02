@@ -154,6 +154,7 @@ class FarmingRobot:
     def _run_monitoring(self) -> None:
         try:
             MonitoringWorkflow(self).run()
+            self._finish_operation("completed", self.message)
         except Exception as exc:
             self.monitoring["running"] = False
             self.state = RobotState.ERROR
