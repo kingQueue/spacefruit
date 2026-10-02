@@ -6,7 +6,7 @@ import time
 from dataclasses import asdict
 from datetime import datetime
 
-from .models import PlantInspectionResult
+from .models import PlantInspectionResult, RobotState
 
 
 class PlantHealthInspector:
@@ -84,7 +84,7 @@ class PlantHealthInspector:
             time.sleep(0.05)
 
         robot.current_inspection_index = max(0, total - 1) if total else 0
-        robot.state = robot.inspection_complete_state
+        robot.state = RobotState.INSPECTION_COMPLETE
         if robot.health_alerts:
             robot.message = (
                 f"Inspection complete. {len(robot.health_alerts)} plant health "
