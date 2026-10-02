@@ -80,3 +80,13 @@ class Planter:
         return True
 
 
+
+
+class WeedRemover:
+    """Hardware abstraction for physically plucking a detected weed."""
+
+    def pluck(self, weed_count: int, cell) -> int:
+        if weed_count <= 0:
+            return 0
+        # Simulation: report that every model-detected weed was removed.
+        return weed_count
