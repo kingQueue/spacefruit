@@ -80,3 +80,16 @@ class Planter:
         return True
 
 
+
+
+class NavigationController:
+    """Navigation interface used by the inspection stage.
+
+    Replace this simulation with wheel encoders, odometry, RTK GPS,
+    LiDAR/vision navigation, or another motion controller on the real robot.
+    """
+
+    def go_to(self, x_m: float, y_m: float) -> None:
+        print(f"[NAV] Moving to plant at ({x_m:.2f}m, {y_m:.2f}m)")
+        time.sleep(0.1)
+        print(f"[NAV] Arrived at ({x_m:.2f}m, {y_m:.2f}m)")
