@@ -5,15 +5,17 @@ from __future__ import annotations
 import os
 import re
 import time
+import threading
 import uuid
 from dataclasses import asdict
 from datetime import datetime
 from typing import Optional
 
 from .catalog import CATALOG_BY_NAME, PLANT_CATALOG
-from .hardware import GPSSensor, Planter, PlotMapper, StartButton, TemperatureHumiditySensor
+from .hardware import GPSSensor, Planter, PlotMapper, StartButton, TemperatureHumiditySensor, WeedRemover
 from .models import EnvironmentReading, GPSReading, PlantProfile, PlantRecommendation, PlantingCell, PlantingStepError, Plot, RobotState
 from .planner import GridPlanner
+from .monitoring import MonitoringWorkflow
 from .recommendations import PlantRecommendationEngine
 from .web import APP_HOST, APP_PORT, THUMBS_DIR, AppServer
 
@@ -30,6 +32,9 @@ class FarmingRobot:
         self.recommender = PlantRecommendationEngine()
         self.grid_planner = GridPlanner()
         self.planter = Planter()
+        self.weed_remover = WeedRemover()
+        self.monitoring = {"running": False, "completed": 0, "total": 0, "issues_detected": 0, "weeds_removed": 0, "current_profile_id": None, "last_health_result": None, "last_weed_result": None}
+        self.monitoring_thread: Optional[threading.Thread] = None
 
         self.environment: Optional[EnvironmentReading] = None
         self.gps: Optional[GPSReading] = None
@@ -50,6 +55,36 @@ class FarmingRobot:
         self.state_revision = 0
         self.message = "Waiting for start button."
         self.app_server = AppServer(self, app_host, app_port) if start_server else None
+
+    def now_iso(self) -> str:
+        return datetime.now().astimezone().isoformat(timespec="seconds")
+
+    def start_monitoring(self) -> dict:
+        if self.state != RobotState.COMPLETE:
+            return {"ok": False, "error": "Monitoring can start after planting is complete."}
+        if self.monitoring.get("running"):
+            return {"ok": False, "error": "Monitoring is already running."}
+        if not self.planting_cells or not self.plant_profiles:
+            return {"ok": False, "error": "No planted profiles are available to monitor."}
+
+        self.monitoring_thread = threading.Thread(
+            target=self._run_monitoring,
+            name="spacefruit-monitoring",
+            daemon=True,
+        )
+        self.monitoring_thread.start()
+        return {"ok": True, "message": "Monitoring workflow started."}
+
+    def _run_monitoring(self) -> None:
+        try:
+            MonitoringWorkflow(self).run()
+        except Exception as exc:
+            self.monitoring["running"] = False
+            self.state = RobotState.ERROR
+            self.last_error = str(exc)
+            self.message = str(exc)
+            self.planting_errors.append(str(exc))
+            self.state_revision += 1
 
     # ----------------------------
     # Planning edits
@@ -365,5 +400,6 @@ class FarmingRobot:
             "planting_errors": self.planting_errors,
             "last_error": self.last_error,
             "planted_counts": self.planted_counts,
+            "monitoring": self.monitoring,
         }
 
