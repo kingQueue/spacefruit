@@ -52,8 +52,7 @@ class SpaceFruitApiTests(SimpleTestCase):
             result = self.post("/api/start-planting")
             self.assertTrue(result["ok"])
 
-            if views.robot.monitoring_thread:
-                thread.join(timeout=5)
+            views.robot.workflow_thread.join(timeout=5)
 
             state = self.client.get("/api/state").json()
             self.assertFalse(views.robot.workflow_thread.is_alive())
@@ -78,12 +77,11 @@ class SpaceFruitApiTests(SimpleTestCase):
             self.assertTrue(self.post("/api/confirm")["ok"])
             self.assertTrue(self.post("/api/load-seeds", {"counts": {"Tomato": 1}})["ok"])
             self.assertTrue(self.post("/api/start-planting")["ok"])
-            if views.robot.monitoring_thread:
-                views.robot.workflow_thread.join(timeout=5)
+            views.robot.workflow_thread.join(timeout=5)
             self.assertEqual(views.robot.state.value, "complete")
             self.assertTrue(self.post("/api/start-monitoring")["ok"])
             if views.robot.monitoring_thread:
-                views.robot.monitoring_thread.join(timeout=5)
+                views.robot.workflow_thread.join(timeout=5)
             state = self.client.get("/api/state").json()
             self.assertEqual(state["operation"]["status"], "completed")
             self.assertEqual(state["monitoring"]["completed"], 1)
