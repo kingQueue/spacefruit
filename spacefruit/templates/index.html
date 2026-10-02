@@ -25,6 +25,8 @@ button.danger { background:#fff0f0; }
 .profile-row { cursor:pointer; }
 .profile-row:hover { background:#f3f7ef; }
 #profile { min-height:120px; }
+.alert { background:#fff4d6; border:1px solid #e0b64a; border-radius:10px; padding:12px; margin:10px 0; }
+.inspection-progress { margin:10px 0; padding:10px; background:#f3f7ef; border-radius:10px; }
 small { color:#5f6b5b; }
 table { border-collapse:collapse; width:100%; }
 th,td { padding:8px; border-bottom:1px solid #e5e8e2; text-align:left; }
@@ -72,6 +74,18 @@ th,td { padding:8px; border-bottom:1px solid #e5e8e2; text-align:left; }
 <div id="profiles"></div>
 </div>
 
+<div class="card">
+<h2>5. Plant health inspection</h2>
+<p>After planting, send the robot to every plant. It will navigate to each plant, capture a camera frame, and pass the frame to the plant-health model.</p>
+<div class="row">
+<button id="inspectButton" class="primary" onclick="startInspection()">Start plant health inspection</button>
+<span id="inspectionStatus" class="badge">Not started</span>
+</div>
+<div id="inspectionProgress"></div>
+<div id="healthAlerts"></div>
+<small>Camera and disease detection are currently placeholders. The hardware/model interfaces are ready for a real camera and computer-vision model.</small>
+</div>
+
 <script>
 let latestState = null;
 
@@ -107,6 +121,7 @@ async function refresh() {
     renderSeedInputs();
     renderGrid();
       renderProfiles();
+      renderInspection();
     } finally {
       refreshInFlight = false;
     }
@@ -216,6 +231,59 @@ function renderProfiles() {
         const image = p.img ? `<img src="/thumbs/${p.img.split('/').map(encodeURIComponent).join('/')}" alt="${esc(p.plant_type)}" style="width:48px;height:48px;object-fit:contain">` : '<span>No image</span>';
         return `<tr class="profile-row" onclick="showProfile('${p.profile_id}')" title="Open plant profile"><td>${image}</td><td>${esc(p.profile_id)}</td><td>${esc(p.plant_type)}</td><td>${p.age_days} days</td><td>(${p.x_m}, ${p.y_m})</td><td>${esc(p.health_status)}</td></tr>`;
       }).join('') + '</table>';
+}
+
+
+async function startInspection() {
+    clearError();
+    const result = await api('/api/start-inspection', 'POST', {});
+    if (!result.ok) { showError(result.error); return; }
+    await refresh();
+}
+
+function renderInspection() {
+    const button = document.getElementById('inspectButton');
+    const status = document.getElementById('inspectionStatus');
+    const progress = document.getElementById('inspectionProgress');
+    const alerts = document.getElementById('healthAlerts');
+    if (!button || !status || !progress || !alerts) return;
+
+    const results = latestState.inspection_results || [];
+    const total = (latestState.plant_profiles || []).length;
+    const index = Number(latestState.current_inspection_index || 0);
+    const running = Boolean(latestState.inspection_running);
+
+    button.disabled = running || total === 0;
+    button.textContent = running ? 'Inspection running...' : 'Start plant health inspection';
+    status.textContent = latestState.state === 'inspection_complete'
+        ? 'Complete'
+        : running ? 'Inspecting' : total ? 'Ready' : 'No plants';
+
+    if (running) {
+        progress.innerHTML = '<div class="inspection-progress">' +
+            'Inspecting plant ' + Math.min(index + 1, total) + ' of ' + total +
+            ' — the robot is navigating to each plant and capturing images.</div>';
+    } else if (results.length) {
+        progress.innerHTML = '<div class="inspection-progress">' +
+            'Inspected ' + results.length + ' of ' + total + ' plants.</div>';
+    } else {
+        progress.innerHTML = '<div class="inspection-progress">No inspection has been run yet.</div>';
+    }
+
+    if (!latestState.health_alerts || !latestState.health_alerts.length) {
+        alerts.innerHTML = '';
+        return;
+    }
+
+    alerts.innerHTML = '<h3>⚠️ Plant health alerts</h3>' +
+        latestState.health_alerts.map(function(alert) {
+            return '<div class="alert">' +
+                '<strong>' + esc(alert.plant_type) + '</strong> — ' + esc(alert.condition) +
+                '<br><small>Profile: ' + esc(alert.profile_id) +
+                ' · Confidence: ' + Math.round(Number(alert.confidence) * 100) + '%</small>' +
+                '<br>' + esc(alert.message) +
+                '</div>';
+        }).join('');
 }
 
 function showError(message) { document.getElementById('error').textContent = message; }

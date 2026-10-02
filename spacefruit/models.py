@@ -97,6 +97,22 @@ class PlantProfile:
     water_needs: str
     typical_germination_days: int
     health_status: str = "newly planted"
+    last_inspected_at: Optional[str] = None
+    last_inspection_id: Optional[str] = None
+
+
+@dataclass
+class PlantInspectionResult:
+    inspection_id: str
+    profile_id: str
+    plant_type: str
+    inspected_at: str
+    x_m: float
+    y_m: float
+    condition: Optional[str]
+    confidence: float
+    disease_detected: bool
+    notes: str = ""
 
 
 class RobotState(str, Enum):
@@ -106,6 +122,8 @@ class RobotState(str, Enum):
     WAITING_FOR_CONFIRMATION = "waiting_for_confirmation"
     WAITING_FOR_SEEDS = "waiting_for_seeds"
     PLANTING = "planting"
+    INSPECTING = "inspecting"
+    INSPECTION_COMPLETE = "inspection_complete"
     COMPLETE = "complete"
     ERROR = "error"
 
