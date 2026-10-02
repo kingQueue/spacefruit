@@ -45,6 +45,7 @@ class FarmingRobot:
         self.planter = Planter()
         self.weed_remover = WeedRemover()
         self.monitoring = {"running": False, "completed": 0, "total": 0, "issues_detected": 0, "weeds_removed": 0, "current_profile_id": None, "last_health_result": None, "last_weed_result": None}
+        self.workflow_thread: Optional[threading.Thread] = None
         self.monitoring_thread: Optional[threading.Thread] = None
 
         self.environment: Optional[EnvironmentReading] = None
@@ -131,7 +132,8 @@ class FarmingRobot:
                     self.planting_errors.append(str(exc))
                 self._finish_operation("error", str(exc), str(exc))
                 self.state_revision += 1
-        threading.Thread(target=worker, name="spacefruit-planting", daemon=True).start()
+        self.workflow_thread = threading.Thread(target=worker, name="spacefruit-planting", daemon=True)
+        self.workflow_thread.start()
         return {"ok": True, "message": "Planting operation started."}
 
     def start_monitoring(self) -> dict:
@@ -148,6 +150,7 @@ class FarmingRobot:
             daemon=True,
         )
         self._begin_operation("monitoring")
+        self.workflow_thread = self.monitoring_thread
         self.monitoring_thread.start()
         return {"ok": True, "message": "Monitoring workflow started."}
 
@@ -451,6 +454,10 @@ class FarmingRobot:
     # ----------------------------
 
     def api_state(self) -> dict:
+        with self.operation_lock:
+            return self._api_state_unlocked()
+
+    def _api_state_unlocked(self) -> dict:
         catalog = [
             {
                 **asdict(item),
