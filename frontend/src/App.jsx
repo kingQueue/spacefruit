@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import Marketplace from "./Marketplace";
+import { authFetch } from "./auth";
+import { useAuth } from "./AuthGate";
 
 const initial = {state:"waiting_for_start",message:"Waiting for start.",seed_plan:{},loaded_seed_counts:{},planting_cells:[],plant_profiles:[],catalog:[],harvest_inventory:{},harvest_inventory_items:[],harvested_items:[],operation:{name:"idle",status:"idle"},monitoring:{completed:0,total:0,issues_detected:0,weeds_removed:0,weeding_completed:0,weeding_total:0,weeding_percent:0,alerts:[]}};
 
 async function api(path, options) {
-  const response = await fetch(path + (path.includes("?") ? "&" : "?") + "_ts=" + Date.now(), Object.assign({cache:"no-store",headers:{"Content-Type":"application/json"}}, options || {}));
+  const response = await authFetch(path + (path.includes("?") ? "&" : "?") + "_ts=" + Date.now(), Object.assign({cache:"no-store",headers:{"Content-Type":"application/json"}}, options || {}));
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || "Request failed");
   return data;
@@ -25,6 +27,7 @@ function thumbnailFor(plantType, storedPath) {
 }
 
 export default function App() {
+  const { user, signOut } = useAuth();
   const [state,setState]=useState(initial);
   const [error,setError]=useState("");
   const [plant,setPlant]=useState("");
@@ -57,7 +60,7 @@ export default function App() {
 
   return <main className="app-shell">
     {view==="marketplace"?<Marketplace onBack={()=>setView("garden")} inventoryItems={state.harvest_inventory_items||[]}/>:<>
-    <header className="app-header"><div className="brand-lockup"><div className="brand-mark" aria-hidden="true">✦</div><div><span className="brand-kicker">YOUR LITTLE PATCH IN SPACE</span><h1>SpaceFruit</h1></div></div><div className="header-actions"><a className="promo-link" href="/promo.html">About SpaceFruit <span aria-hidden="true">↗</span></a><button className="marketplace-button" onClick={()=>setView("marketplace")}>Marketplace <span aria-hidden="true">↗</span></button><div className="connection-badge"><span className="status-dot"/>Robot is {state.state.replaceAll("_"," ")}</div></div></header>
+    <header className="app-header"><div className="brand-lockup"><div className="brand-mark" aria-hidden="true">✦</div><div><span className="brand-kicker">YOUR LITTLE PATCH IN SPACE</span><h1>SpaceFruit</h1></div></div><div className="header-actions"><a className="promo-link" href="/promo.html">About SpaceFruit <span aria-hidden="true">↗</span></a><button className="marketplace-button" onClick={()=>setView("marketplace")}>Marketplace <span aria-hidden="true">↗</span></button><span className="account-greeting">{user?.display_name || user?.email}</span><button className="signout-button" onClick={signOut}>Sign out</button><div className="connection-badge"><span className="status-dot"/>Robot is {state.state.replaceAll("_"," ")}</div></div></header>
     {error && <div className="error">{error}</div>}
 
     <section className="garden-hero">

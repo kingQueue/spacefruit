@@ -50,15 +50,31 @@ Use the browser controls to:
 
 The robot will then execute the simulated planting sequence.
 
-## No external Python packages
+## Accounts and Supabase setup
 
-The prototype uses only the Python standard library.
+Supabase Auth handles email/password sign-in, Google OAuth, sessions, and password resets. Supabase Postgres stores profiles, gardens, memberships, plots, harvest inventory, and marketplace listings. Install backend dependencies:
 
-That makes it easy to run on:
+```bash
+python -m pip install -r requirements.txt
+```
 
-- Windows
-- Linux
-- Raspberry Pi OS
+Copy `.env.example` to `.env` and fill in the Supabase project URL and publishable key. Never put a Supabase secret/service-role key in this app or its frontend. Start the Django API and Vite frontend in separate terminals:
+
+```bash
+python main.py
+```
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open `http://127.0.0.1:5173`. Users can create an account from the sign-in screen. Supabase sends confirmation and password-reset emails; configure a custom SMTP provider in Supabase Auth before relying on email delivery outside the Supabase organization team.
+
+Add `http://127.0.0.1:5173/**` to Supabase Auth's allowed redirect URLs. To enable Google sign-in, configure Google as a provider in Supabase Auth with OAuth credentials from Google Cloud; use the callback URL shown in Supabase's Google provider settings. Email/password and password-reset flows use Supabase Auth.
+
+The initial Supabase schema is in `supabase/migrations/20261006000000_initial_schema.sql`. It enables RLS on the app tables and creates a private starter garden for each new Supabase Auth user. The app syncs plot and harvest summaries and stores marketplace listings in Supabase. Robot simulation state remains in process memory, so the active robot workflow resets when the backend restarts.
 
 ## Architecture
 

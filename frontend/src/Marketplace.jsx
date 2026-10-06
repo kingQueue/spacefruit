@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { authFetch } from "./auth";
 
 const otherGrowersListings = {
   trade: [
@@ -33,12 +34,12 @@ function thumbnailFor(produce) {
   return produce.trim().toLowerCase().replace(/[\s-]+/g,"_")+".svg";
 }
 
-function MarketSection({ section, ownListings, selectedPurchaseIds, purchasedListingIds, onTogglePurchase, onConfirmPurchase }) {
+function MarketSection({ section, ownListings, communityListings, selectedPurchaseIds, purchasedListingIds, onTogglePurchase, onConfirmPurchase }) {
   const [query,setQuery]=useState("");
   const listedByUser=ownListings.filter(listing=>listing.active&&listing.section===section.id).map(listing=>({
     ...listing,produce:listing.plant_type,variety:"From your harvest inventory",grower:"Your garden",location:"Your neighborhood",isMine:true,
   }));
-  const listings=[...otherGrowersListings[section.id].filter(listing=>!purchasedListingIds.has(listing.id)),...listedByUser].filter(listing=>listing.produce.toLowerCase().includes(query.trim().toLowerCase()));
+  const listings=[...otherGrowersListings[section.id].filter(listing=>!purchasedListingIds.has(listing.id)),...communityListings,...listedByUser].filter(listing=>listing.produce.toLowerCase().includes(query.trim().toLowerCase()));
 
   return <section className="card market-section" id={`market-${section.id}`}>
     <div className="section-heading"><span className="section-icon">{section.icon}</span><div><p className="eyebrow">COMMUNITY PRODUCE</p><h2>{section.title}</h2></div><span className="listing-count">{listings.length} {listings.length===1?"listing":"listings"}</span></div>
@@ -86,7 +87,7 @@ export default function Marketplace({ onBack, inventoryItems=[] }) {
 
   async function refreshListings() {
     try {
-      const response=await fetch("/api/marketplace/listings?_ts="+Date.now(),{cache:"no-store"});
+      const response=await authFetch("/api/marketplace/listings?_ts="+Date.now(),{cache:"no-store"});
       const data=await response.json();
       if(!response.ok) throw new Error(data.error||"Could not load your marketplace listings.");
       setOwnListings(data.listings||[]);
@@ -118,10 +119,10 @@ export default function Marketplace({ onBack, inventoryItems=[] }) {
     const items=Object.entries(selectedItems).filter(([,details])=>Number(details.quantity)>0).map(([plant_type,details])=>({plant_type,quantity:Number(details.quantity),weight:Number(details.weight),weight_unit:details.weight_unit,asking_price:listingSection==="buy"?Number(details.asking_price):null}));
     setError("");
     try {
-      const response=await fetch("/api/marketplace/listings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({section:listingSection,items})});
+      const response=await authFetch("/api/marketplace/listings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({section:listingSection,items})});
       const data=await response.json();
       if(!response.ok) throw new Error(data.error||"Could not list the selected produce.");
-      setOwnListings(current=>[...current,...(data.listings||[])]);
+      setOwnListings(current=>[...current.filter(row=>!(data.listings||[]).some(created=>created.id===row.id)),...(data.listings||[])]);
       setNotice(`${items.length} ${items.length===1?"item":"items"} added to your ${sections.find(section=>section.id===listingSection)?.title} listings.`);
       setSelectedItems({});
       setShowListingForm(false);
@@ -131,7 +132,7 @@ export default function Marketplace({ onBack, inventoryItems=[] }) {
   async function updateListing(id,action) {
     setError("");
     try {
-      const response=await fetch(`/api/marketplace/listings/${id}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action})});
+      const response=await authFetch(`/api/marketplace/listings/${id}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action})});
       const data=await response.json();
       if(!response.ok) throw new Error(data.error||"Could not update this listing.");
       if(action==="remove") setOwnListings(current=>current.filter(listing=>listing.id!==id));
@@ -143,6 +144,7 @@ export default function Marketplace({ onBack, inventoryItems=[] }) {
   const listableItems=inventoryItems.filter(item=>remainingFor(item)>0);
   const selectedCount=Object.values(selectedItems).filter(details=>Number(details.quantity)>0).length;
   const selectedPurchaseListings=otherGrowersListings.buy.filter(listing=>selectedPurchaseIds.includes(listing.id));
+  const communityBySection=Object.fromEntries(sections.map(section=>[section.id,ownListings.filter(listing=>!listing.is_mine&&listing.active&&listing.section===section.id).map(listing=>({id:listing.id,produce:listing.plant_type,variety:"Fresh from a community garden",quantity:`${listing.quantity} available`,grower:listing.grower,location:listing.location,price:listing.asking_price==null?"For sale":`$${Number(listing.asking_price).toFixed(2)}`,lookingFor:"Open to a friendly swap",note:"Shared by a community grower",img:listing.img}))]));
 
   function togglePurchase(id) {
     setSelectedPurchaseIds(current=>current.includes(id)?current.filter(itemId=>itemId!==id):[...current,id]);
@@ -162,10 +164,10 @@ export default function Marketplace({ onBack, inventoryItems=[] }) {
     <header className="app-header market-header"><div className="brand-lockup"><div className="brand-mark" aria-hidden="true">✦</div><div><span className="brand-kicker">GROW A LITTLE CLOSER</span><h1>Garden Marketplace</h1></div></div><div className="market-header-actions"><button className="marketplace-button list-produce-button" onClick={()=>{setError("");setNotice("");setShowListingForm(true);}}>＋ List produce</button><button className="marketplace-button back-to-garden" onClick={onBack}><span aria-hidden="true">←</span> Back to garden</button></div></header>
     <section className="garden-hero market-hero"><div className="hero-copy"><p className="eyebrow">GOOD THINGS GROW BETTER TOGETHER</p><h2>From one garden to another</h2><p className="hero-message">Trade, find, or share a fresh harvest with your neighborhood growers.</p></div><div className="market-hero-art" aria-hidden="true">🧺<span>✧</span></div></section>
     <nav className="market-tabs" aria-label="Marketplace sections">{sections.map(section=><a key={section.id} href={`#market-${section.id}`}>{section.icon} {section.title}</a>)}<a href="#my-listings">📦 My listings</a></nav>
-    <div className="market-note"><span aria-hidden="true">✦</span> Community board <b>·</b> Sample listings from other local growers</div>
+    <div className="market-note"><span aria-hidden="true">✦</span> Community board <b>·</b> Fresh listings from SpaceFruit growers</div>
     {error&&<div className="error market-feedback" role="alert">{error}</div>}{notice&&<div className="market-success" role="status">{notice}</div>}
-    <MyListings listings={ownListings} onDeactivate={id=>updateListing(id,"deactivate")} onRemove={id=>updateListing(id,"remove")}/>
-    {sections.map(section=><MarketSection key={section.id} section={section} ownListings={ownListings} selectedPurchaseIds={selectedPurchaseIds} purchasedListingIds={purchasedListingIds} onTogglePurchase={togglePurchase} onConfirmPurchase={()=>setShowPurchaseConfirmation(true)}/>)}
+    <MyListings listings={ownListings.filter(listing=>listing.is_mine)} onDeactivate={id=>updateListing(id,"deactivate")} onRemove={id=>updateListing(id,"remove")}/>
+    {sections.map(section=><MarketSection key={section.id} section={section} ownListings={ownListings.filter(listing=>listing.is_mine)} communityListings={communityBySection[section.id]} selectedPurchaseIds={selectedPurchaseIds} purchasedListingIds={purchasedListingIds} onTogglePurchase={togglePurchase} onConfirmPurchase={()=>setShowPurchaseConfirmation(true)}/>)}
 
     {showPurchaseConfirmation&&<div className="modal-backdrop" role="presentation" onMouseDown={event=>{if(event.target===event.currentTarget)setShowPurchaseConfirmation(false);}}><section className="replant-modal purchase-confirmation" role="dialog" aria-modal="true" aria-labelledby="purchase-confirm-title"><button type="button" className="close-listing-modal" aria-label="Close" onClick={()=>setShowPurchaseConfirmation(false)}>×</button><p className="eyebrow">FRESH FROM THE NEIGHBORHOOD</p><h2 id="purchase-confirm-title">Confirm your purchase</h2><p className="section-intro">Review the produce you selected before confirming.</p><ul>{selectedPurchaseListings.map(listing=><li key={listing.id}><b>{listing.produce}</b><span>{listing.quantity} · {listing.price}</span><small>From {listing.grower}</small></li>)}</ul><div className="modal-actions"><button type="button" onClick={()=>setShowPurchaseConfirmation(false)}>Keep browsing</button><button type="button" className="primary-button" disabled={!selectedPurchaseListings.length} onClick={confirmPurchase}>Confirm purchase</button></div></section></div>}
 
