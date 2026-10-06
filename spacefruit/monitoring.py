@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import random
 from dataclasses import dataclass
 from typing import Optional, Protocol
 
@@ -45,41 +46,76 @@ class VisualWeedModel(Protocol):
         ...
 
 
-class CameraPlaceholder:
-    """Camera interface placeholder; replace capture() with a real camera driver."""
+class SimulatedCamera:
+    """Fake camera that returns a captured frame for each robot location."""
 
     def capture(self, cell: PlantingCell) -> CameraFrame:
         return CameraFrame(
             cell_id=cell.profile_id or f"{cell.row}-{cell.column}",
-            image_path=None,
-            captured=False,
+            image_path=f"simulated://camera/{cell.profile_id or cell.row}",
+            captured=True,
         )
 
 
-class PlaceholderHealthModel:
-    """Visual-model adapter placeholder for future CV/ML inference."""
+class SimulatedHealthModel:
+    """Fake camera inference that flags one or two plants during each scan."""
+
+    ISSUE_TYPES = ("possible malnutrition", "possible root rot")
+
+    def __init__(self, rng=None):
+        self.rng = rng or random.Random()
+        self._issues_by_profile: dict[str, list[str]] = {}
+
+    def prepare_scan(self, profiles: list[PlantProfile]) -> None:
+        """Choose a repeatable target set for this scan (one or two if available)."""
+        self._issues_by_profile = {}
+        if not profiles:
+            return
+        issue_count = self.rng.randint(1, min(2, len(profiles)))
+        for profile in self.rng.sample(profiles, issue_count):
+            self._issues_by_profile[profile.profile_id] = [self.rng.choice(self.ISSUE_TYPES)]
 
     def analyze(self, frame: CameraFrame, profile: PlantProfile) -> HealthAnalysis:
+        issues = self._issues_by_profile.get(profile.profile_id, []) if frame.captured else []
+        if issues:
+            return HealthAnalysis(
+                issue_detected=True,
+                issues=list(issues),
+                summary=f"Camera detected {', '.join(issues)}.",
+            )
         return HealthAnalysis(
             issue_detected=False,
             issues=[],
-            summary="No visual health issue detected by placeholder model.",
+            summary="Camera scan found no visible health issue.",
         )
 
 
-class PlaceholderWeedModel:
-    """Visual weed-model adapter placeholder for future CV/ML inference."""
+class SimulatedWeedModel:
+    """Fake camera inference that sometimes finds weeds around a plant."""
+
+    def __init__(self, rng=None, detection_rate: float = 0.35):
+        self.rng = rng or random.Random()
+        self.detection_rate = detection_rate
 
     def analyze(self, frame: CameraFrame, cell: PlantingCell) -> WeedAnalysis:
+        if frame.captured and self.rng.random() < self.detection_rate:
+            weeds_found = self.rng.randint(1, 2)
+            return WeedAnalysis(True, weeds_found, f"Camera detected {weeds_found} weed(s).")
         return WeedAnalysis(
             weed_detected=False,
             weeds_found=0,
-            summary="No weed detected by placeholder model.",
+            summary="Camera scan found no weeds.",
         )
 
 
+# Backward-compatible names for callers that used the original placeholders.
+CameraPlaceholder = SimulatedCamera
+PlaceholderHealthModel = SimulatedHealthModel
+PlaceholderWeedModel = SimulatedWeedModel
+
+
 class MonitoringWorkflow:
-    """Drives to every planted cell, analyzes plant health, then removes detected weeds."""
+    """Visits every planted cell, weeds it, then checks the plant's health."""
 
     def __init__(
         self,
@@ -89,12 +125,17 @@ class MonitoringWorkflow:
         weed_model: Optional[VisualWeedModel] = None,
     ):
         self.robot = robot
-        self.camera = camera or CameraPlaceholder()
-        self.health_model = health_model or PlaceholderHealthModel()
-        self.weed_model = weed_model or PlaceholderWeedModel()
+        self.camera = camera or SimulatedCamera()
+        self.health_model = health_model or SimulatedHealthModel()
+        self.weed_model = weed_model or SimulatedWeedModel()
 
     def run(self) -> None:
-        cells = [cell for cell in self.robot.planting_cells if cell.profile_id]
+        cells = [
+            cell for cell in self.robot.planting_cells
+            if cell.status == "planted"
+            and cell.profile_id
+            and cell.profile_id in self.robot.plant_profiles
+        ]
         total = len(cells)
         if total == 0:
             raise RuntimeError("MONITORING_NO_PLANTS: no planted plant profiles are available.")
@@ -105,12 +146,20 @@ class MonitoringWorkflow:
             "completed": 0,
             "total": total,
             "issues_detected": 0,
+            "alerts": [],
             "weeds_removed": 0,
+            "weeding_completed": 0,
+            "weeding_total": total,
+            "weeding_percent": 0,
             "current_profile_id": None,
             "last_health_result": None,
             "last_weed_result": None,
         }
         self.robot.message = f"Monitoring started: 0/{total} plants checked."
+
+        prepare_scan = getattr(self.health_model, "prepare_scan", None)
+        if prepare_scan is not None:
+            prepare_scan([self.robot.plant_profiles[cell.profile_id] for cell in cells])
 
         for index, cell in enumerate(cells, start=1):
             profile = self.robot.plant_profiles.get(cell.profile_id)
@@ -122,6 +171,21 @@ class MonitoringWorkflow:
             self._drive_to(cell)
             frame = self.camera.capture(cell)
 
+            self.robot.message = f"Weeding location {index}/{total}: {profile.plant_type}"
+            weed = self.weed_model.analyze(frame, cell)
+            removed = self._remove_weeds(cell, weed)
+            cell.weeding_completed = True
+            self.robot.monitoring["weeding_completed"] = index
+            self.robot.monitoring["weeding_percent"] = round(index * 100 / total)
+            self.robot.monitoring["last_weed_result"] = {
+                "profile_id": profile.profile_id,
+                "weed_detected": weed.weed_detected,
+                "weeds_found": weed.weeds_found,
+                "removed": removed,
+                "summary": weed.summary,
+            }
+
+            self.robot.message = f"Monitoring plant {index}/{total}: {profile.plant_type}"
             health = self.health_model.analyze(frame, profile)
             self._apply_health_result(profile, health)
             self.robot.monitoring["last_health_result"] = {
@@ -130,17 +194,14 @@ class MonitoringWorkflow:
                 "issues": health.issues,
                 "summary": health.summary,
             }
-
-            self.robot.message = f"Checking weeds at plant {index}/{total}: {profile.plant_type}"
-            weed = self.weed_model.analyze(frame, cell)
-            removed = self._remove_weeds(cell, weed)
-            self.robot.monitoring["last_weed_result"] = {
-                "profile_id": profile.profile_id,
-                "weed_detected": weed.weed_detected,
-                "weeds_found": weed.weeds_found,
-                "removed": removed,
-                "summary": weed.summary,
-            }
+            if health.issue_detected:
+                self.robot.monitoring["alerts"].append({
+                    "profile_id": profile.profile_id,
+                    "plant_type": profile.plant_type,
+                    "issues": list(health.issues),
+                    "message": f"Camera alert: {profile.plant_type} — {', '.join(health.issues)}.",
+                    "detected_at": self.robot.now_iso(),
+                })
 
             self.robot.monitoring["completed"] = index
             self.robot.monitoring["issues_detected"] += int(health.issue_detected)
@@ -151,6 +212,7 @@ class MonitoringWorkflow:
         self.robot.monitoring["current_profile_id"] = None
         self.robot.message = (
             f"Monitoring complete: {total} plants checked, "
+            f"weeding completed at {self.robot.monitoring['weeding_completed']}/{total} locations, "
             f"{self.robot.monitoring['issues_detected']} health issues found, "
             f"{self.robot.monitoring['weeds_removed']} weeds removed."
         )

@@ -13,6 +13,7 @@ import django
 django.setup()
 
 from django.test import Client, SimpleTestCase
+from spacefruit.harvesting import HarvestAnalysis
 from spacefruit.robot import FarmingRobot
 import spacefruit_api.views as views
 
@@ -127,6 +128,64 @@ class SpaceFruitApiTests(SimpleTestCase):
             state = self.client.get("/api/state").json()
             self.assertEqual(state["operation"]["status"], "completed")
             self.assertTrue(all(c["status"] == "planted" for c in state["planting_cells"]))
+
+    def test_harvest_endpoint_checks_selected_profile_and_updates_robot_inventory(self):
+        class ReadyCameraModel:
+            def analyze(self, frame, profile):
+                return HarvestAnalysis(True, "Camera confirms ripe.")
+
+        with patch("spacefruit.hardware.time.sleep", return_value=None):
+            self.post("/api/start")
+            self.post("/api/add-plant", {"plant": "Tomato", "count": 1})
+            self.post("/api/confirm")
+            self.post("/api/load-seeds", {"counts": {"Tomato": 1}})
+            self.post("/api/start-planting")
+            views.robot.workflow_thread.join(timeout=5)
+            profile_id = next(iter(views.robot.plant_profiles))
+            views.robot.harvest_readiness_model = ReadyCameraModel()
+
+            response = self.post("/api/harvest", {"profile_id": profile_id})
+            views.robot.harvest_thread.join(timeout=5)
+
+        self.assertTrue(response["ok"])
+        state = self.client.get("/api/state").json()
+        self.assertEqual(len(state["plant_profiles"]), 1)
+        self.assertEqual(state["plant_profiles"][0]["plant_type"], "Empty Plot")
+        self.assertEqual(state["planting_cells"][0]["status"], "empty_plot")
+        self.assertEqual(state["harvest_inventory"], {"Tomato": 1})
+        self.assertEqual(len(state["harvest_inventory_items"]), 1)
+        self.assertEqual(state["harvest_inventory_items"][0]["plant_type"], "Tomato")
+        self.assertEqual(state["harvest_inventory_items"][0]["quantity"], 1)
+        self.assertTrue(state["harvest_inventory_items"][0]["img"])
+        self.assertEqual(state["harvested_items"][0]["profile_id"], profile_id)
+
+    def test_replant_endpoint_replaces_one_empty_plot_with_selected_plant(self):
+        class ReadyCameraModel:
+            def analyze(self, frame, profile):
+                return HarvestAnalysis(True, "Camera confirms ripe.")
+
+        with patch("spacefruit.hardware.time.sleep", return_value=None):
+            self.post("/api/start")
+            self.post("/api/add-plant", {"plant": "Tomato", "count": 1})
+            self.post("/api/confirm")
+            self.post("/api/load-seeds", {"counts": {"Tomato": 1}})
+            self.post("/api/start-planting")
+            views.robot.workflow_thread.join(timeout=5)
+            old_profile_id = views.robot.planting_cells[0].profile_id
+            views.robot.harvest_readiness_model = ReadyCameraModel()
+            self.post("/api/harvest", {"profile_id": old_profile_id})
+            views.robot.harvest_thread.join(timeout=5)
+            empty_id = views.robot.planting_cells[0].profile_id
+
+            response = self.post("/api/replant", {"profile_id": empty_id, "plant": "Cucumber"})
+            views.robot.workflow_thread.join(timeout=5)
+
+        self.assertTrue(response["ok"])
+        state = self.client.get("/api/state").json()
+        self.assertEqual(state["planting_cells"][0]["status"], "planted")
+        self.assertEqual(state["planting_cells"][0]["plant"], "Cucumber")
+        self.assertNotEqual(state["planting_cells"][0]["profile_id"], empty_id)
+        self.assertEqual(state["plant_profiles"][0]["plant_type"], "Cucumber")
 
 
 if __name__ == "__main__":

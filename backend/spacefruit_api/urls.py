@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import add_plant, confirm_plan, load_seeds, remove_plant, start_monitoring, start_planting, start_workflow, state, thumbnail
+from .views import add_plant, confirm_plan, harvest, load_seeds, marketplace_listing_action, marketplace_listings, remove_plant, replant, start_monitoring, start_planting, start_workflow, state, thumbnail
 
 urlpatterns = [
     path("api/state", state),
@@ -10,5 +10,9 @@ urlpatterns = [
     path("api/load-seeds", load_seeds),
     path("api/start-planting", start_planting),
     path("api/start-monitoring", start_monitoring),
+    path("api/harvest", harvest),
+    path("api/replant", replant),
+    path("api/marketplace/listings", marketplace_listings),
+    path("api/marketplace/listings/<str:listing_id>", marketplace_listing_action),
     path("thumbs/<path:name>", thumbnail),
 ]

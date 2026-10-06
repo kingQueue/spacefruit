@@ -67,6 +67,9 @@ class PlantingCell:
     status: str = "pending"
     seed_number: int = 0
     error: Optional[str] = None
+    weeds_detected: int = 0
+    weeds_removed: int = 0
+    weeding_completed: bool = False
 
 
 class PlantingStepError(RuntimeError):
@@ -102,6 +105,11 @@ class PlantProfile:
     last_monitored_at: Optional[str] = None
     weeds_detected: int = 0
     weeds_removed: int = 0
+    harvest_status: str = "not_checked"
+    harvest_ready: Optional[bool] = None
+    harvest_check_summary: Optional[str] = None
+    last_harvest_check_at: Optional[str] = None
+    harvested_at: Optional[str] = None
 
     def __post_init__(self):
         if self.health_issues is None:
@@ -117,6 +125,7 @@ class RobotState(str, Enum):
     PLANTING = "planting"
     COMPLETE = "complete"
     MONITORING = "monitoring"
+    HARVESTING = "harvesting"
     ERROR = "error"
 
 

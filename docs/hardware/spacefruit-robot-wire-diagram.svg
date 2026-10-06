@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2200" height="1420" viewBox="0 0 2200 1420" role="img" aria-labelledby="title desc">
+<title id="title">SpaceFruit 8 by 5 inch robot wiring diagram</title>
+<desc id="desc">Selected 3.3 volt sensor breakouts, Raspberry Pi 5, YD-RP2040, motor controllers, power converters, four encoder motors, and four servos.</desc>
+<defs><style>
+text{font-family:Arial,sans-serif;fill:#182a37}.title{font-size:34px;font-weight:bold}.sub{font-size:18px;fill:#405663}.head{font-size:21px;font-weight:bold}.label{font-size:17px;font-weight:bold}.small{font-size:14px}.tiny{font-size:12px}.box{fill:#f8fbfa;stroke:#36505e;stroke-width:2}.ctrl{fill:#eaf4ff;stroke:#327ab3;stroke-width:2}.sens{fill:#eff8e9;stroke:#658a46;stroke-width:2}.power{fill:#fff2dc;stroke:#bd7b20;stroke-width:2}.motor{fill:#f4edff;stroke:#7557aa;stroke-width:2}.safety{fill:#fff0ef;stroke:#b95348;stroke-width:2}.wire-p{fill:none;stroke:#c3453b;stroke-width:4}.wire-g{fill:none;stroke:#3d4549;stroke-width:4}.wire-i{fill:none;stroke:#2386b7;stroke-width:3}.wire-s{fill:none;stroke:#64944b;stroke-width:3}.wire-c{fill:none;stroke:#9a6dbe;stroke-width:3}.dash{stroke-dasharray:9 7}
+</style><marker id="arr" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#405663"/></marker></defs>
+<rect width="2200" height="1420" fill="#fff"/>
+<text x="46" y="55" class="title">SpaceFruit robot · compact 8 × 5 in chassis</text>
+<text x="48" y="86" class="sub">Power distribution and signal wiring · 3.3 V logic · robot arm and chassis are separate printed parts</text>
+
+<!-- Power rail / protection -->
+<rect x="45" y="125" width="310" height="130" rx="14" class="power"/><text x="66" y="160" class="head">3S Li-ion battery</text><text x="66" y="189" class="small">3 × matched 18650 cells</text><text x="66" y="213" class="small">9.0–12.6 V · ≥10 A BMS</text><text x="66" y="237" class="small">Use a 3S balance charger</text>
+<rect x="395" y="145" width="180" height="90" rx="12" class="safety"/><text x="418" y="181" class="label">Main fuse</text><text x="415" y="207" class="small">near battery +</text>
+<rect x="620" y="145" width="200" height="90" rx="12" class="safety"/><text x="643" y="181" class="label">Master switch</text><text x="642" y="207" class="small">latching E-stop</text>
+<rect x="870" y="135" width="230" height="110" rx="12" class="power"/><text x="889" y="170" class="label">6 V motor buck</text><text x="889" y="198" class="small">≥3 A continuous</text><text x="889" y="222" class="small">motor branch fuse</text>
+<rect x="1150" y="135" width="245" height="110" rx="12" class="power"/><text x="1170" y="170" class="label">5 V servo buck</text><text x="1170" y="198" class="small">5 A · separate rail</text><text x="1170" y="222" class="small">servo branch fuse</text>
+<rect x="1450" y="135" width="300" height="110" rx="12" class="power"/><text x="1470" y="170" class="label">Pi 5 UPS / regulator</text><text x="1470" y="198" class="small">DFRobot FIT0992</text><text x="1470" y="222" class="small">6–18 V in, 5.1 V / 5 A</text>
+<path d="M355 190 H395 M575 190 H620 M820 190 H870 M820 190 V270 H1265 V245 M820 190 V286 H1600 V245 M1100 205 H1250 V670 H1295 M1250 765 H1295" class="wire-p"/>
+<text x="355" y="175" class="tiny">BATT+</text><text x="824" y="264" class="tiny">fused battery bus</text>
+
+<!-- Controller core -->
+<rect x="875" y="355" width="300" height="185" rx="16" class="ctrl"/><text x="900" y="390" class="head">YD-RP2040</text><text x="900" y="420" class="small">3.3 V GPIO / I²C host</text><text x="900" y="446" class="small">USB serial from Pi 5</text><text x="900" y="472" class="small">encoder counting + safety</text><text x="900" y="505" class="small">3V3, GND, SDA, SCL</text>
+<rect x="1370" y="355" width="320" height="185" rx="16" class="ctrl"/><text x="1395" y="390" class="head">Raspberry Pi 5</text><text x="1395" y="420" class="small">Wi-Fi · API · computer vision</text><text x="1395" y="446" class="small">front CSI + arm CSI cameras</text><text x="1395" y="472" class="small">powered from 5.1 V UPS HAT</text><text x="1395" y="505" class="small">USB CDC ↔ RP2040</text>
+<path d="M1600 245 V355" class="wire-p"/><path d="M1525 245 V300 H1040 V355" class="wire-p"/>
+<path d="M1175 440 H1370" class="wire-i dash" marker-end="url(#arr)"/><text x="1200" y="425" class="tiny">USB data</text>
+<path d="M875 500 H800 V875 H1690" class="wire-g"/><text x="1185" y="893" class="tiny">Common ground; route motor/servo return directly to power distribution, not through logic ground traces</text>
+
+<!-- 3.3V sensor / i2c bus -->
+<path d="M900 470 H765 V610 H720 M765 610 V705 H720 M765 610 V800 H720 M765 610 H900 V610 M1175 470 H1230 V610 H1295 M1230 610 V705 H1295 M1230 610 V800 H1295" class="wire-i"/>
+<path d="M765 610 V850 H650" class="wire-s"/>
+<rect x="450" y="575" width="270" height="70" rx="10" class="sens"/><text x="470" y="605" class="label">BME280 breakout</text><text x="470" y="628" class="small">3.3 V VIN · I²C</text>
+<rect x="450" y="670" width="270" height="70" rx="10" class="sens"/><text x="470" y="700" class="label">BNO085 IMU</text><text x="470" y="723" class="small">3.3 V VIN · I²C</text>
+<rect x="450" y="765" width="270" height="70" rx="10" class="sens"/><text x="470" y="795" class="label">2 × VL53L1X ToF</text><text x="470" y="818" class="small">3.3 V VIN · I²C · XSHUT</text>
+<rect x="1295" y="575" width="320" height="70" rx="10" class="ctrl"/><text x="1315" y="605" class="label">PCA9685 servo PWM</text><text x="1315" y="628" class="small">VCC=3.3 V logic · V+=servo rail</text>
+<rect x="1295" y="670" width="320" height="70" rx="10" class="motor"/><text x="1315" y="700" class="label">Motoron M2T256 · left pair</text><text x="1315" y="723" class="small">I²C · 6 V motor power · addr A</text>
+<rect x="1295" y="765" width="320" height="70" rx="10" class="motor"/><text x="1315" y="795" class="label">Motoron M2T256 · right pair</text><text x="1315" y="818" class="small">I²C · 6 V motor power · addr B</text>
+<text x="785" y="590" class="tiny">Shared I²C bus (3.3 V pull-ups). Give the two Motorons distinct addresses; use ToF XSHUT pins for startup address assignment.</text>
+<text x="785" y="635" class="tiny">PCA9685 VCC must use 3.3 V; never join servo V+ to controller 3V3.</text>
+<text x="785" y="655" class="tiny">Motoron VDD/logic pins also use 3.3 V; connect both controller grounds to logic ground.</text>
+
+<!-- motor outputs and encoders -->
+<path d="M1440 740 V950 H1750 M1460 835 V1055 H1750 M1530 740 V950 H2010 M1550 835 V1055 H2010 M1615 610 H1680" class="wire-c"/>
+<rect x="1710" y="920" width="220" height="85" rx="12" class="motor"/><text x="1732" y="953" class="label">Left motors ×2</text><text x="1732" y="980" class="small">210:1 · 6 V · encoder</text>
+<rect x="1950" y="920" width="220" height="85" rx="12" class="motor"/><text x="1972" y="953" class="label">Right motors ×2</text><text x="1972" y="980" class="small">210:1 · 6 V · encoder</text>
+<path d="M1710 985 H1210 V555 H1110" class="wire-s dash" marker-end="url(#arr)"/><path d="M1950 985 H1200 V575 H1110" class="wire-s dash" marker-end="url(#arr)"/>
+<text x="1435" y="900" class="tiny">Motor outputs (6 V)</text><text x="1190" y="570" class="tiny">4 encoder A/B pairs → RP2040 3.3 V GPIO (verify encoder voltage)</text>
+
+<!-- servos and safety -->
+<path d="M1395 245 V280 H1765 V575" class="wire-p"/>
+<rect x="1680" y="575" width="450" height="135" rx="12" class="motor"/><text x="1702" y="609" class="head">4 × TowerPro SG92R servos</text><text x="1702" y="638" class="small">5 V rail from dedicated buck → PCA9685 V+</text><text x="1702" y="666" class="small">PCA9685 PWM outputs · lightweight arm only</text><text x="1702" y="690" class="tiny">Use mechanical stops; estimate torque again for final tool/payload.</text>
+<rect x="55" y="935" width="470" height="145" rx="13" class="safety"/><text x="78" y="972" class="head">Hardwired safety chain</text><text x="78" y="1002" class="small">NC latching E-stop → drops motor + servo power</text><text x="78" y="1028" class="small">4 bumper switches + arm limit switches → RP2040</text><text x="78" y="1054" class="tiny">Keep the Pi powered to report the stop; software is not the E-stop.</text>
+<path d="M525 1000 H820 V540 H920" class="wire-s"/><path d="M525 1030 H780 V540 H950" class="wire-s"/>
+<rect x="610" y="1120" width="1000" height="235" rx="14" class="box"/><text x="635" y="1158" class="head">Selected fit / build notes</text>
+<text x="635" y="1190" class="small">• Wheels: 4 × Pololu 60 × 8 mm (#1420), 60 mm diameter, 3 mm D-shaft; tires sit 1 mm inboard.</text>
+<text x="635" y="1218" class="small">• Wheel wells: Ø70 mm (5 mm radial clearance) × 14 mm axle width; motor body/mount depth still needs mock-fit.</text>
+<text x="635" y="1246" class="small">• Motors: 4 × Pololu 210:1 MP 6 V with 12 CPR encoders (#5142), 0.67 A stall each.</text>
+<text x="635" y="1274" class="small">• Drivers: 2 × Pololu Motoron M2T256 I²C (#5064), each drives two motors; set unique I²C addresses.</text>
+<text x="635" y="1302" class="small">• Logic sensors: BME280, BNO085 and both ToF carriers powered from 3.3 V. Verify owned BME280/PCA9685 module variants.</text>
+<text x="635" y="1330" class="small">• Power: 3S battery → 6 V motor buck, separate 5 V / 5 A servo buck, and Pi 5 5.1 V / 5 A regulator.</text>
+
+<rect x="55" y="1115" width="500" height="240" rx="14" class="box"/><text x="80" y="1155" class="head">Wire legend</text>
+<path d="M82 1190 H170" class="wire-p"/><text x="190" y="1196" class="small">battery / regulated power</text>
+<path d="M82 1225 H170" class="wire-g"/><text x="190" y="1231" class="small">ground return</text>
+<path d="M82 1260 H170" class="wire-i"/><text x="190" y="1266" class="small">I²C signals</text>
+<path d="M82 1295 H170" class="wire-c"/><text x="190" y="1301" class="small">motor / servo outputs</text>
+<path d="M82 1330 H170" class="wire-s dash"/><text x="190" y="1336" class="small">safety / encoder signals</text>
+</svg>

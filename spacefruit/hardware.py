@@ -90,3 +90,15 @@ class WeedRemover:
             return 0
         # Simulation: report that every model-detected weed was removed.
         return weed_count
+
+
+class Harvester:
+    """Hardware abstraction for collecting one camera-confirmed ripe plant."""
+
+    def harvest(self, profile, cell) -> bool:
+        print(
+            f"[HARVESTER] Harvesting {profile.plant_type} at "
+            f"({cell.x_m:.2f}m, {cell.y_m:.2f}m)"
+        )
+        time.sleep(0.15)
+        return True

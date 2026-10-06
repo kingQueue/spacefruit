@@ -31,6 +31,27 @@ class SpaceFruitPlantingTests(unittest.TestCase):
         self.robot.create_planting_plan()
         self.assertEqual(len(self.robot.planting_cells), 5)
 
+    def test_start_planting_rejects_unverified_seed_inventory(self):
+        self.robot.seed_plan = {"Lettuce": 1, "Tomato": 5, "Cucumber": 5}
+        self.robot.state = main.RobotState.WAITING_FOR_SEEDS
+
+        result = self.robot.start_planting()
+
+        self.assertFalse(result["ok"])
+        self.assertIn("Load and verify", result["error"])
+        self.assertIsNone(self.robot.workflow_thread)
+        self.assertNotEqual(self.robot.operation.status, "running")
+
+    def test_start_planting_accepts_exact_verified_seed_inventory(self):
+        self.prepare_plan(1)
+        with patch.object(main.time, "sleep", return_value=None):
+            result = self.robot.start_planting()
+            self.assertTrue(result["ok"], result)
+            self.robot.workflow_thread.join(timeout=2)
+
+        self.assertEqual(self.robot.state, main.RobotState.COMPLETE)
+        self.assertEqual(self.robot.planted_counts["Tomato"], 1)
+
     def test_successful_planting_creates_one_profile_per_seed(self):
         self.prepare_plan(2)
         with patch.object(main.time, "sleep", return_value=None):

@@ -13,10 +13,11 @@ from datetime import datetime
 from typing import Optional
 
 from .catalog import CATALOG_BY_NAME, PLANT_CATALOG
-from .hardware import GPSSensor, Planter, PlotMapper, StartButton, TemperatureHumiditySensor, WeedRemover
+from .hardware import GPSSensor, Harvester, Planter, PlotMapper, StartButton, TemperatureHumiditySensor, WeedRemover
 from .models import EnvironmentReading, GPSReading, PlantProfile, PlantRecommendation, PlantingCell, PlantingStepError, Plot, RobotState
 from .planner import GridPlanner
-from .monitoring import MonitoringWorkflow
+from .monitoring import MonitoringWorkflow, SimulatedCamera
+from .harvesting import HarvestingWorkflow, SimulatedHarvestReadinessModel
 from .recommendations import PlantRecommendationEngine
 from .web import APP_HOST, APP_PORT, THUMBS_DIR, AppServer
 
@@ -44,9 +45,13 @@ class FarmingRobot:
         self.grid_planner = GridPlanner()
         self.planter = Planter()
         self.weed_remover = WeedRemover()
-        self.monitoring = {"running": False, "completed": 0, "total": 0, "issues_detected": 0, "weeds_removed": 0, "current_profile_id": None, "last_health_result": None, "last_weed_result": None}
+        self.harvester = Harvester()
+        self.harvest_camera = SimulatedCamera()
+        self.harvest_readiness_model = SimulatedHarvestReadinessModel()
+        self.monitoring = {"running": False, "completed": 0, "total": 0, "issues_detected": 0, "alerts": [], "weeds_removed": 0, "weeding_completed": 0, "weeding_total": 0, "weeding_percent": 0, "current_profile_id": None, "last_health_result": None, "last_weed_result": None}
         self.workflow_thread: Optional[threading.Thread] = None
         self.monitoring_thread: Optional[threading.Thread] = None
+        self.harvest_thread: Optional[threading.Thread] = None
 
         self.environment: Optional[EnvironmentReading] = None
         self.gps: Optional[GPSReading] = None
@@ -57,6 +62,9 @@ class FarmingRobot:
         self.seed_plan: dict[str, int] = {}
         self.planting_cells: list[PlantingCell] = []
         self.plant_profiles: dict[str, PlantProfile] = {}
+        self.harvest_inventory: dict[str, int] = {}
+        self.harvest_inventory_items: dict[str, dict] = {}
+        self.harvested_items: list[dict] = []
         self.loaded_seed_counts: dict[str, int] = {}
         self.planting_errors: list[str] = []
         self.last_error: Optional[str] = None
@@ -115,6 +123,10 @@ class FarmingRobot:
             return {"ok": False, "error": f"Planting cannot start from {self.state.value}."}
         if self.operation.status == "running":
             return {"ok": False, "error": "A workflow operation is already running."}
+        if not self.seed_plan:
+            return {"ok": False, "error": "The planting plan is empty."}
+        if self.loaded_seed_counts != self.seed_plan or self.planter.seed_inventory != self.seed_plan:
+            return {"ok": False, "error": "Load and verify the exact seed counts before planting."}
         self._begin_operation("planting")
         def worker():
             try:
@@ -141,7 +153,10 @@ class FarmingRobot:
             return {"ok": False, "error": "Monitoring can start after planting is complete."}
         if self.monitoring.get("running"):
             return {"ok": False, "error": "Monitoring is already running."}
-        if not self.planting_cells or not self.plant_profiles:
+        if not any(
+            cell.profile_id in self.plant_profiles and cell.status == "planted"
+            for cell in self.planting_cells
+        ):
             return {"ok": False, "error": "No planted profiles are available to monitor."}
 
         self.monitoring_thread = threading.Thread(
@@ -153,6 +168,141 @@ class FarmingRobot:
         self.workflow_thread = self.monitoring_thread
         self.monitoring_thread.start()
         return {"ok": True, "message": "Monitoring workflow started."}
+
+    def start_harvest(self, profile_id: Optional[str]) -> dict:
+        if self.state != RobotState.COMPLETE:
+            return {"ok": False, "error": "Harvesting can start after planting or monitoring is complete."}
+        if self.operation.status == "running":
+            return {"ok": False, "error": "A robot operation is already running."}
+        if not isinstance(profile_id, str) or not profile_id or profile_id not in self.plant_profiles:
+            return {"ok": False, "error": "Select a valid plant profile to harvest."}
+        profile = self.plant_profiles[profile_id]
+        cell = next((item for item in self.planting_cells if item.profile_id == profile_id), None)
+        if cell is None or cell.status != "planted" or profile.harvest_status == "harvested":
+            return {"ok": False, "error": "This plant has already been harvested or is unavailable."}
+
+        self.state = RobotState.HARVESTING
+        profile.harvest_status = "checking"
+        profile.harvest_check_summary = "Robot is driving to the plant for a camera ripeness check."
+        self._begin_operation("harvesting")
+        self.harvest_thread = threading.Thread(
+            target=self._run_harvest,
+            args=(profile_id,),
+            name="spacefruit-harvesting",
+            daemon=True,
+        )
+        self.workflow_thread = self.harvest_thread
+        self.harvest_thread.start()
+        self.state_revision += 1
+        return {"ok": True, "message": "Robot is checking the selected plant for harvest readiness."}
+
+    def _run_harvest(self, profile_id: str) -> None:
+        profile = self.plant_profiles[profile_id]
+        try:
+            result = HarvestingWorkflow(
+                self,
+                camera=self.harvest_camera,
+                readiness_model=self.harvest_readiness_model,
+            ).run(profile_id)
+            self._finish_operation("completed", result.summary)
+        except Exception as exc:
+            profile.harvest_status = "error"
+            profile.harvest_check_summary = str(exc)
+            self.state = RobotState.COMPLETE
+            self.message = str(exc)
+            self.state_revision += 1
+            self._finish_operation("error", str(exc), str(exc))
+
+    def replace_with_empty_plot(self, cell: PlantingCell, harvested_profile: PlantProfile) -> None:
+        """Replace a harvested plant's visible profile while retaining its plot coordinates."""
+        empty_id = f"PLOT-{uuid.uuid4().hex[:8].upper()}"
+        self.plant_profiles.pop(harvested_profile.profile_id, None)
+        self.plant_profiles[empty_id] = PlantProfile(
+            profile_id=empty_id,
+            img="default.svg",
+            plant_type="Empty Plot",
+            age_days=0,
+            planted_at=self.now_iso(),
+            x_m=cell.x_m,
+            y_m=cell.y_m,
+            spacing_m=cell.spacing_m,
+            planting_depth_m=cell.planting_depth_m,
+            temperature_at_planting_c=harvested_profile.temperature_at_planting_c,
+            humidity_at_planting_percent=harvested_profile.humidity_at_planting_percent,
+            sunlight="",
+            water_needs="",
+            typical_germination_days=0,
+            health_status="Empty plot",
+        )
+        cell.plant = "Empty Plot"
+        cell.profile_id = empty_id
+        cell.status = "empty_plot"
+        cell.error = None
+        self.state_revision += 1
+
+    def start_replant(self, profile_id: Optional[str], plant_name: Optional[str]) -> dict:
+        if self.state != RobotState.COMPLETE:
+            return {"ok": False, "error": "A plot can be replanted after the current robot operation is complete."}
+        if self.operation.status == "running":
+            return {"ok": False, "error": "A robot operation is already running."}
+        if not isinstance(profile_id, str) or not profile_id:
+            return {"ok": False, "error": "Select an empty plot to replant."}
+        empty_profile = self.plant_profiles.get(profile_id)
+        cell = next((item for item in self.planting_cells if item.profile_id == profile_id), None)
+        if empty_profile is None or empty_profile.plant_type != "Empty Plot" or cell is None or cell.status != "empty_plot":
+            return {"ok": False, "error": "The selected profile is not an empty plot."}
+        if not isinstance(plant_name, str) or plant_name not in CATALOG_BY_NAME:
+            return {"ok": False, "error": "Select a valid plant type."}
+        if self.plot is None or self.environment is None:
+            return {"ok": False, "error": "Plot and environment data are unavailable."}
+
+        self.state = RobotState.PLANTING
+        self.message = f"Preparing to plant {plant_name} in the selected empty plot."
+        self._begin_operation("replanting")
+        worker = threading.Thread(
+            target=self._run_replant,
+            args=(profile_id, plant_name),
+            name="spacefruit-replanting",
+            daemon=True,
+        )
+        self.workflow_thread = worker
+        worker.start()
+        return {"ok": True, "message": f"Robot is planting {plant_name} in the selected plot."}
+
+    def _run_replant(self, profile_id: str, plant_name: str) -> None:
+        cell = next(item for item in self.planting_cells if item.profile_id == profile_id)
+        empty_profile = self.plant_profiles[profile_id]
+        try:
+            catalog = CATALOG_BY_NAME[plant_name]
+            self.loaded_seed_counts = {plant_name: 1}
+            self.planter.load_seeds(self.loaded_seed_counts)
+            candidate = PlantingCell(
+                row=cell.row, column=cell.column, x_m=cell.x_m, y_m=cell.y_m,
+                plant=plant_name, spacing_m=catalog.spacing_m,
+                planting_depth_m=catalog.planting_depth_m, seed_number=cell.seed_number,
+            )
+            if not self.planter.plant(candidate) or self.planter.seed_inventory.get(plant_name, 0) != 0:
+                raise RuntimeError(f"The planter could not dispense one {plant_name} seed.")
+            self.create_profile_for_cell(candidate)
+            del self.plant_profiles[profile_id]
+            cell.plant = plant_name
+            cell.spacing_m = candidate.spacing_m
+            cell.planting_depth_m = candidate.planting_depth_m
+            cell.profile_id = candidate.profile_id
+            cell.status = "planted"
+            cell.error = None
+            self.planted_counts[plant_name] = self.planted_counts.get(plant_name, 0) + 1
+            self.state = RobotState.COMPLETE
+            self.message = f"Planted {plant_name} in the selected plot. A new plant profile is ready."
+            self.state_revision += 1
+            self._finish_operation("completed", self.message)
+        except Exception as exc:
+            self.plant_profiles[profile_id] = empty_profile
+            self.state = RobotState.COMPLETE
+            self.message = f"Could not replant the selected plot: {exc}"
+            self.last_error = str(exc)
+            self.state_revision += 1
+            self._finish_operation("error", self.message, str(exc))
 
     def _run_monitoring(self) -> None:
         try:
@@ -477,6 +627,9 @@ class FarmingRobot:
             "loaded_seed_counts": self.loaded_seed_counts,
             "planting_cells": [asdict(item) for item in self.planting_cells],
             "plant_profiles": [asdict(item) for item in self.plant_profiles.values()],
+            "harvest_inventory": self.harvest_inventory,
+            "harvest_inventory_items": list(self.harvest_inventory_items.values()),
+            "harvested_items": self.harvested_items,
             "catalog": catalog,
             "seed_count": self.planter.seed_count,
             "total_requested_seeds": self.total_requested_seeds(),
